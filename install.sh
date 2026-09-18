@@ -46,4 +46,32 @@ else:
 # 3. Syntax-Check
 PY "import ast; ast.parse(open('$TG/server.py').read()); print('[ok] server.py syntax ok')"
 PY "import ast; ast.parse(open('$TG/methods_usage_history.py').read()); print('[ok] methods_usage_history.py syntax ok')"
-echo "[done] Gateway neu starten:  systemctl --user restart hermes-gateway.service"
+
+# 4. Service-Restart anbieten (WICHTIG: Desktop-App/Clients hängen am
+#    DASHBOARD-Service auf Port 9119 — nicht am messaging-gateway!).
+#    Ohne Neustart serviert der laufende Prozess alte Module ohne die RPCs.
+SERVICE="hermes-dashboard.service"
+if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active "$SERVICE" >/dev/null 2>&1; then
+  if [ "${ASSUME_YES:-}" = "1" ]; then
+    RESTART=y
+  else
+    read -r -p ">>> $SERVICE jetzt neu starten, damit die RPCs live gehen? [y/N] " RESTART
+  fi
+  case "$RESTART" in
+    [yY]|[yY][eE][sS])
+      systemctl --user restart "$SERVICE"
+      sleep 3
+      if systemctl --user is-active "$SERVICE" >/dev/null 2>&1; then
+        echo "[ok] $SERVICE neu gestartet und aktiv"
+      else
+        echo "[FEHLER] $SERVICE nicht aktiv nach Restart — prüfen: journalctl --user -u $SERVICE -n 30" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      echo "[skip] kein Restart — RPCs erst nach 'systemctl --user restart $SERVICE' verfügbar"
+      ;;
+  esac
+else
+  echo "[skip] $SERVICE läuft nicht (systemctl --user) — manuell starten, falls dieser Host der Dashboard-/Desktop-Backend ist"
+fi
