@@ -1,6 +1,6 @@
 # hermes-usage-history-rpc
 
-**Privates Repo (kein Remote)** — PoC fürs hCS-Kunden-Pilot: server-side Usage-Analytics via Gateway-RPC.
+Server-side Usage-Analytics via Gateway-RPC für [Hermes Agent](https://github.com/NousResearch/hermes-agent).
 
 ## Was das macht
 
@@ -46,8 +46,7 @@ sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"  # vorher/nachher gl
 
 ## Kontext
 
-- Ergänzt das **token-stats Desktop-Plugin** (PoC-Kette fürs Kunden-Pilot:
-  Plugin zeigt live + historische Daten → später Grafana-Pro-User-Dashboards beim Kunden)
+- Ergänzt das **token-stats Desktop-Plugin** (Plugin zeigt live + historische Daten)
 - `state.db` ist pro Profil; das `profile`-Parameter-Grundgerüst ist im Handler vorbereitet
 - Upstream-Kandidat: sauber als PR gegen NousResearch/hermes-agent einreichbar
   (HandlerRegistry-Pattern, keine Writes, keine neuen Dependencies)
