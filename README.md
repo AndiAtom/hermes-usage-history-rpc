@@ -1,54 +1,63 @@
 # hermes-usage-history-rpc
 
-Server-side Usage-Analytics via Gateway-RPC für [Hermes Agent](https://github.com/NousResearch/hermes-agent).
+Server-side usage analytics via gateway RPC for [Hermes Agent](https://github.com/NousResearch/hermes-agent).
 
-## Was das macht
+## What it does
 
-Zwei neue JSON-RPC-Methoden im Hermes-Gateway, die **persistente** Token-/Kosten-Daten aus
-`state.db` lesen — unabhängig vom Client und über Gateway-Neustarts hinweg (die Lücke: der
-existierende `session.usage`-RPC liefert nur live in-memory Daten der fokussierten Session).
+Two new JSON-RPC methods for the Hermes gateway that read **persistent** token/cost
+data from `state.db` — client-independent and across gateway restarts (the gap:
+the existing `session.usage` RPC only serves live in-memory data of the focused
+session).
 
-| Methode | Parameter | Rückgabe |
+| Method | Parameters | Returns |
 |---|---|---|
-| `usage.history` | `days` (default 30, 0 = alles), `since` (unix ts), `limit` (default 200), `models` (bool, default true), `session_id` (Deep-Dive) | `sessions: [...]` kompakte Zeilen mit Token-Totals + `model_usage: [...]` Per-Model/Task-Breakdown |
-| `usage.totals` | `days` / `since` | `totals` (Summen), `by_model` (Rollup), `by_day` (Rollup mit Kosten) |
+| `usage.history` | `days` (default 30, 0 = all time), `since` (unix ts), `limit` (default 200), `models` (bool, default true), `session_id` (deep dive) | `sessions: [...]` compact rows with token totals + `model_usage: [...]` per-model/task breakdown |
+| `usage.totals` | `days` / `since` | `totals` (sums), `by_model` (rollup), `by_day` (rollup with cost) |
 
-Datenquellen: `sessions` (Lifetime-Totals pro Session) + `session_model_usage`
-(Per-Model/Task, inkl. Auxiliary-Tasks wie `title_generation`, `background_review`).
-Read-only, keine Writes.
+Data sources: `sessions` (lifetime totals per session) + `session_model_usage`
+(per model/task, including auxiliary tasks like `title_generation`,
+`background_review`). Read-only, no writes.
 
 ## Layout
 
 ```
-tui_gateway/methods_usage_history.py   # Gateway-Modul (HandlerRegistry-Pattern wie methods_session.py)
-install.sh                             # Idempotenter Installer (Modul-Kopie + server.py-Hooks)
+tui_gateway/methods_usage_history.py   # Gateway module (HandlerRegistry pattern, like methods_session.py)
+install.sh                             # Idempotent installer (module copy + server.py hooks)
 ```
 
-## Install / Re-Install nach Hermes-Update
+## Install / re-install after a Hermes update
 
 ```bash
 ./install.sh
-systemctl --user restart hermes-gateway.service
 ```
 
-Der Installer prüft per Marker, ob die server.py-Hooks (Import + Register-Loop) schon
-gesetzt sind, und tut nichts, wenn alles vorhanden ist. Anker ist der `methods_connectors`
-Import — wenn upstream die Import-Liste umbaut, schlägt der Installer sauber fehl statt
-kaputtzupatchen.
+The installer is idempotent: it checks markers whether the server.py hooks
+(import + register loop) are already in place and does nothing if so. The anchor
+is the `methods_connectors` import — if upstream ever restructures that import
+list, the installer fails loudly instead of patching something broken.
 
-## Verifikation nach Install
+After installing, restart the service the **desktop app actually talks to**
+(`hermes-dashboard.service`, port 9119 — NOT `hermes-gateway.service`): the
+installer offers this as a y/N prompt and also supports `ASSUME_YES=1` for
+non-interactive runs.
+
+## Verification after install
 
 ```bash
-# RPC-Test direkt gegen den Gateway:
-# (Desktop-Plugin nutzt host.request('usage.history', {days: 7}))
-sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"  # vorher/nachher gleich
+# RPC test in-process (imports tui_gateway.server, invokes the handlers):
+python3 test_rpc.py
+
+# state.db must be untouched (read-only module):
+sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"   # same before/after
+
+# Desktop app consumes it via host.request('usage.history', {days: 7})
 ```
 
-## Kontext
+## Context
 
-- Ergänzt das **[token-stats Desktop-Plugin](https://github.com/AndiAtom/hermes-token-stats)**
-  (Plugin zeigt live + historische Daten; ohne dieses Modul degradiert dessen
-  Pane auf `live only`)
-- `state.db` ist pro Profil; das `profile`-Parameter-Grundgerüst ist im Handler vorbereitet
-- Upstream-Kandidat: sauber als PR gegen NousResearch/hermes-agent einreichbar
-  (HandlerRegistry-Pattern, keine Writes, keine neuen Dependencies)
+- Companion to the **[token-stats desktop plugin](https://github.com/AndiAtom/hermes-token-stats)**
+  (plugin shows live + historical data; without this module its pane degrades
+  to `live only`)
+- `state.db` is per-profile; the `profile` parameter scaffolding is prepared in the handler
+- Upstream candidate: cleanly submittable as a PR against NousResearch/hermes-agent
+  (HandlerRegistry pattern, no writes, no new dependencies)
