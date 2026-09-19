@@ -46,7 +46,9 @@ sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"  # vorher/nachher gl
 
 ## Kontext
 
-- Ergänzt das **token-stats Desktop-Plugin** (Plugin zeigt live + historische Daten)
+- Ergänzt das **[token-stats Desktop-Plugin](https://github.com/AndiAtom/hermes-token-stats)**
+  (Plugin zeigt live + historische Daten; ohne dieses Modul degradiert dessen
+  Pane auf `live only`)
 - `state.db` ist pro Profil; das `profile`-Parameter-Grundgerüst ist im Handler vorbereitet
 - Upstream-Kandidat: sauber als PR gegen NousResearch/hermes-agent einreichbar
   (HandlerRegistry-Pattern, keine Writes, keine neuen Dependencies)
