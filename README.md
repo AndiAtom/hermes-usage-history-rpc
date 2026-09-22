@@ -45,7 +45,8 @@ non-interactive runs.
 
 ```bash
 # RPC test in-process (imports tui_gateway.server, invokes the handlers):
-python3 test_rpc.py
+# Hermes-venv required (system python3 lacks deps like dotenv):
+/usr/local/lib/hermes-agent/venv/bin/python3 test_rpc.py
 
 # state.db must be untouched (read-only module):
 sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"   # same before/after
