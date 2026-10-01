@@ -15,7 +15,7 @@ import tempfile
 import unittest
 
 REPO = os.path.dirname(os.path.abspath(__file__))
-PKG = os.path.join(REPO, "plugin_pkg", "token-stats-ledger", "dashboard")
+PKG = os.path.join(REPO, "plugin_pkg", "token-stats", "dashboard")
 sys.path.insert(0, PKG)
 
 STATE_COPY = None
@@ -94,7 +94,7 @@ class TestPluginApi(unittest.TestCase):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
         app = FastAPI()
-        app.include_router(plugin_api.router, prefix="/api/plugins/token-stats-ledger")
+        app.include_router(plugin_api.router, prefix="/api/plugins/token-stats")
         cls.client = TestClient(app)
 
     @classmethod
@@ -102,14 +102,14 @@ class TestPluginApi(unittest.TestCase):
         cls.env.cleanup()
 
     def test_profiles(self):
-        r = self.client.get("/api/plugins/token-stats-ledger/profiles")
+        r = self.client.get("/api/plugins/token-stats/profiles")
         assert r.status_code == 200
         assert r.json() == {"profiles": ["default"]}
 
     def test_health_no_db(self):
         # base exists but no ledger.db for profile 'empty'
         r = self.client.get(
-            "/api/plugins/token-stats-ledger/health?profile=empty")
+            "/api/plugins/token-stats/health?profile=empty")
         assert r.status_code == 200
         j = r.json()
         assert j["ok"] is False and "available" in j
@@ -121,7 +121,7 @@ class TestPluginApi(unittest.TestCase):
             {"sid": "s1", "model": "m2", "known_in": 30, "last_poll": 1500.0},
             {"sid": "s2", "known_in": 500, "last_poll": 3000.0},
         ])
-        r = self.client.get("/api/plugins/token-stats-ledger/ledger?days=0")
+        r = self.client.get("/api/plugins/token-stats/ledger?days=0")
         assert r.status_code == 200
         j = r.json()
         sids = [s["id"] for s in j["sessions"]]
@@ -145,7 +145,7 @@ class TestPluginApi(unittest.TestCase):
             {"sid": "s1", "model": "m", "task": "", "known_in": 100,
              "known_cached": 10, "known_out": 5, "known_calls": 1},
         ])
-        r = self.client.get("/api/plugins/token-stats-ledger/ledger?days=0")
+        r = self.client.get("/api/plugins/token-stats/ledger?days=0")
         mu = r.json()["model_usage"]
         assert len(mu) == 1
         m = mu[0]
@@ -160,14 +160,28 @@ class TestPluginApi(unittest.TestCase):
             {"sid": "s2", "known_in": 200},
         ])
         r = self.client.get(
-            "/api/plugins/token-stats-ledger/ledger?session_id=s2&days=0")
+            "/api/plugins/token-stats/ledger?session_id=s2&days=0")
         j = r.json()
         assert [s["id"] for s in j["sessions"]] == ["s2"]
         assert all(m["session_id"] == "s2" for m in j["model_usage"])
 
+    def test_ledger_day_window_filters(self):
+        import time
+        now = time.time()
+        self.env.seed([
+            {"sid": "recent", "known_in": 10, "last_poll": now - 100},
+            {"sid": "stale", "known_in": 20, "last_poll": now - 40 * 86400},
+        ])
+        r = self.client.get(
+            "/api/plugins/token-stats/ledger?days=30&limit=10")
+        j = r.json()
+        ids = [s["id"] for s in j["sessions"]]
+        assert ids == ["recent"], ids  # stale session outside 30d window
+        assert all(m["session_id"] == "recent" for m in j["model_usage"])
+
     def test_unknown_profile_404(self):
         r = self.client.get(
-            "/api/plugins/token-stats-ledger/ledger?profile=nope")
+            "/api/plugins/token-stats/ledger?profile=nope")
         assert r.status_code == 404
         j = r.json()["detail"]
         assert "available" in j and j["available"] == ["default"]
@@ -182,7 +196,7 @@ class TestPluginApi(unittest.TestCase):
         db.commit()
         db.close()
         r = self.client.get(
-            "/api/plugins/token-stats-ledger/events?session_id=s1")
+            "/api/plugins/token-stats/events?session_id=s1")
         assert r.status_code == 200
         evs = r.json()["events"]
         assert evs and evs[0]["kind"] == "decrease" and evs[0]["counter"] == "in"
@@ -192,7 +206,7 @@ class TestPluginApi(unittest.TestCase):
         import time
         self.env.seed([
             {"sid": "s1", "known_in": 1, "last_poll": time.time()}])
-        r = self.client.get("/api/plugins/token-stats-ledger/health")
+        r = self.client.get("/api/plugins/token-stats/health")
         j = r.json()
         assert j["ok"] is True and j["rows"] >= 1 and j["last_poll"] > 0
 

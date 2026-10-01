@@ -1,6 +1,8 @@
-"""token-stats-ledger backend: monotonic (known) token counters for the
+"""token-stats known-ledger backend: monotonic (known) token counters for the
 token-stats desktop plugin. Official plugin backend — auto-mounts under
-/api/plugins/token-stats-ledger/ when the plugin is in plugins.enabled.
+/api/plugins/token-stats/ (the DESKTOP plugin's own ID — ctx.rest is
+namespace-locked, so the backend must mount under the client's ID) when the
+plugin is in plugins.enabled.
 
 Two data sources, clean split:
 - Ledger DB (<LEDGER_BASE>/<profile>/ledger.db, WAL): the monotonic known
@@ -140,8 +142,14 @@ async def ledger(days: int = 30, since: float = 0, limit: int = 200,
     for r in rows:
         by_sid.setdefault(r["session_id"], []).append(r)
 
-    # session list, most recent ledger activity first
-    sids = sorted(by_sid, key=lambda s: max(
+    # session list, most recent ledger activity first.
+    # Day-window filtering (days/since) applies SERVER-side on the
+    # ledger's last_poll — same semantics as usage.history's window.
+    sids = [s for s in by_sid if max(
+        r["last_poll"] for r in by_sid[s]) >= cutoff]
+    if session_id:
+        sids = [s for s in sids if s == session_id]
+    sids = sorted(sids, key=lambda s: max(
         r["last_poll"] for r in by_sid[s]), reverse=True)
     if not session_id:
         sids = sids[:limit]
@@ -174,12 +182,14 @@ async def ledger(days: int = 30, since: float = 0, limit: int = 200,
             # ledger extras
             "ledger_only": sid not in meta,
             "last_poll": last_active,
-            "_cutoff_hint": cutoff,  # client applies day-window filtering
         })
 
     model_usage = []
     if models:
+        sid_set = set(sids)
         for r in rows:
+            if r["session_id"] not in sid_set:
+                continue
             model_usage.append({
                 "session_id": r["session_id"],
                 "model": r["model"],
