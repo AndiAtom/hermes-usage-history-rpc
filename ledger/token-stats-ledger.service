@@ -1,0 +1,15 @@
+[Unit]
+Description=token-stats known-ledger daemon (polls Hermes state.db read-only)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/hermes-agent/venv/bin/python3 -m ledger.daemon
+WorkingDirectory=/root/Private/hermes-usage-history-rpc
+Environment=PYTHONPATH=/root/Private/hermes-usage-history-rpc
+Restart=on-failure
+RestartSec=10
+# vom Hermes-Gateway-Prozess abgekoppelt, überlebt Hermes-Updates
+
+[Install]
+WantedBy=multi-user.target
