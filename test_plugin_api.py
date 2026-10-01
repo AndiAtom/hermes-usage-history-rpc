@@ -36,9 +36,9 @@ def fake_state_db(path):
         );
     """)
     db.execute(
-        "INSERT INTO sessions (id, title, source, started_at, model, "
-        "cache_write_tokens, reasoning_tokens, estimated_cost_usd) "
-        "VALUES ('s1', 'Test Session', 'desktop', 1000.0, 'm', 10, 5, 0.42)")
+        "INSERT INTO sessions (id, title, source, started_at, last_activity_at, "
+        "model, cache_write_tokens, reasoning_tokens, estimated_cost_usd) "
+        "VALUES ('s1', 'Test Session', 'desktop', 1000.0, 1500.0, 'm', 10, 5, 0.42)")
     db.commit()
     db.close()
 
@@ -115,17 +115,21 @@ class TestPluginApi(unittest.TestCase):
         assert j["ok"] is False and "available" in j
 
     def test_ledger_sessions_shape(self):
+        # s1 has state.db metadata (last_activity_at=1500); s2 is
+        # ledger-only → activity falls back to first_seen (1000.0).
+        # Sort must follow REAL activity, NOT last_poll (bumped every cycle).
         self.env.seed([
             {"sid": "s1", "known_in": 100, "known_cached": 50,
              "known_out": 20, "known_calls": 2, "last_poll": 2000.0},
             {"sid": "s1", "model": "m2", "known_in": 30, "last_poll": 1500.0},
-            {"sid": "s2", "known_in": 500, "last_poll": 3000.0},
+            {"sid": "s2", "known_in": 500, "first_seen": 1000.0,
+             "last_poll": 9999.0},  # huge last_poll must NOT win the sort
         ])
         r = self.client.get("/api/plugins/token-stats/ledger?days=0")
         assert r.status_code == 200
         j = r.json()
         sids = [s["id"] for s in j["sessions"]]
-        assert sids == ["s2", "s1"]  # most recent ledger activity first
+        assert sids == ["s1", "s2"], sids  # activity order, not last_poll
         s1 = next(s for s in j["sessions"] if s["id"] == "s1")
         # session sums over grain rows
         assert s1["input_tokens"] == 130 and s1["cache_read_tokens"] == 50
@@ -168,9 +172,12 @@ class TestPluginApi(unittest.TestCase):
     def test_ledger_day_window_filters(self):
         import time
         now = time.time()
+        # ledger-only sessions: activity = first_seen (no state.db rows)
         self.env.seed([
-            {"sid": "recent", "known_in": 10, "last_poll": now - 100},
-            {"sid": "stale", "known_in": 20, "last_poll": now - 40 * 86400},
+            {"sid": "recent", "known_in": 10, "first_seen": now - 100,
+             "last_poll": now - 100},
+            {"sid": "stale", "known_in": 20, "first_seen": now - 40 * 86400,
+             "last_poll": now - 40 * 86400},
         ])
         r = self.client.get(
             "/api/plugins/token-stats/ledger?days=30&limit=10")

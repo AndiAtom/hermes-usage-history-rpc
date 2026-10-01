@@ -72,35 +72,37 @@ def _ledger_rows(profile, session_id=""):
         conn.close()
 
 
-def _session_meta(session_ids):
-    """Metadata for the given sessions from state.db (read-only).
+def _session_meta():
+    """Metadata for ALL sessions from state.db (read-only, single query).
 
     Returns {session_id: {title, source, started_at, ended_at, last_active,
     message_count, model, billing_provider, billing_mode,
     cache_write_tokens, reasoning_tokens, estimated_cost_usd}}.
+
+    NOTE: fetched for ALL sessions up front — the ledger route needs
+    last_active BEFORE window-filtering and sorting (the ledger's own
+    last_poll is bumped every daemon cycle for every row, so it is
+    useless as an activity signal; state.db last_active is the real one).
     """
     out = {}
-    if not session_ids or not os.path.exists(STATE_DB):
+    if not os.path.exists(STATE_DB):
         return out
     conn = _ro(STATE_DB)
     try:
-        for sid in session_ids:
-            r = conn.execute(
-                """
-                SELECT id, COALESCE(title, '') AS title, source,
-                       started_at, ended_at,
-                       COALESCE(last_activity_at, ended_at, started_at) AS last_active,
-                       message_count, model, billing_provider, billing_mode,
-                       cache_write_tokens, reasoning_tokens, estimated_cost_usd
-                  FROM sessions WHERE id = ?
-                """,
-                (sid,),
-            ).fetchone()
-            if r:
-                out[sid] = dict(r)
+        for r in conn.execute(
+            """
+            SELECT id, COALESCE(title, '') AS title, source,
+                   started_at, ended_at,
+                   COALESCE(last_activity_at, ended_at, started_at) AS last_active,
+                   message_count, model, billing_provider, billing_mode,
+                   cache_write_tokens, reasoning_tokens, estimated_cost_usd
+              FROM sessions
+            """
+        ):
+            out[r["id"]] = dict(r)
+        return out
     finally:
         conn.close()
-    return out
 
 
 @router.get("/profiles")
@@ -137,24 +139,31 @@ async def ledger(days: int = 30, since: float = 0, limit: int = 200,
     if rows is None:
         return {"sessions": [], "model_usage": []}
 
-    # group grain rows by session
+    # Group grain rows by session, then resolve per-session ACTIVITY:
+    # state.db last_activity_at when the session still exists there,
+    # else the ledger's first_seen (ledger-only session, e.g. after a
+    # CASCADE delete — last_poll is useless: the daemon bumps it for
+    # EVERY row EVERY cycle, so it would put dead sessions on top).
     by_sid = {}
     for r in rows:
         by_sid.setdefault(r["session_id"], []).append(r)
 
-    # session list, most recent ledger activity first.
-    # Day-window filtering (days/since) applies SERVER-side on the
-    # ledger's last_poll — same semantics as usage.history's window.
-    sids = [s for s in by_sid if max(
-        r["last_poll"] for r in by_sid[s]) >= cutoff]
+    meta = _session_meta()
+
+    def activity(sid):
+        m = meta.get(sid)
+        if m and m.get("last_active"):
+            return m["last_active"]
+        return min(r["first_seen"] for r in by_sid[sid])
+
+    # Day-window filtering (days/since) on REAL activity — same
+    # semantics as usage.history's window.
+    sids = [s for s in by_sid if activity(s) >= cutoff]
     if session_id:
         sids = [s for s in sids if s == session_id]
-    sids = sorted(sids, key=lambda s: max(
-        r["last_poll"] for r in by_sid[s]), reverse=True)
+    sids = sorted(sids, key=activity, reverse=True)
     if not session_id:
         sids = sids[:limit]
-
-    meta = _session_meta(sids)
 
     sessions = []
     for sid in sids:
