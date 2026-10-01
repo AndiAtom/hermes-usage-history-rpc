@@ -1,0 +1,6 @@
+# AI-Session-Gedächtnis — nie committen (Konvention 22.09.2026)
+AI-HELPER.md
+
+# Python
+__pycache__/
+*.pyc
