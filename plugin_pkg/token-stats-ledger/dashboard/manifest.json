@@ -1,0 +1,4 @@
+{
+    "name": "token-stats-ledger",
+    "api": "plugin_api.py"
+}
