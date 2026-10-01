@@ -1,6 +1,8 @@
 # hermes-usage-history-rpc
 
-Server-side usage analytics via gateway RPC for [Hermes Agent](https://github.com/NousResearch/hermes-agent).
+Server-side usage analytics for [Hermes Agent](https://github.com/NousResearch/hermes-agent):
+two patched-in gateway RPCs **plus** a known-ledger daemon + plugin backend
+serving **monotonic** (compression-safe) token counters.
 
 ## What it does
 
@@ -18,10 +20,46 @@ Data sources: `sessions` (lifetime totals per session) + `session_model_usage`
 (per model/task, including auxiliary tasks like `title_generation`,
 `background_review`). Read-only, no writes.
 
+## Known-Ledger (monotonic counters)
+
+`state.db` is NOT monotonic: compression resets, `ON DELETE CASCADE` on
+`session_model_usage` and rewinds make counters drop. Client-side
+"largest seen value" heuristics lose deltas. The ledger fixes that:
+
+- **Daemon** (`ledger/daemon.py`, systemd unit `token-stats-ledger.service`)
+  polls every profile's `state.db` read-only (`mode=ro`) every 15 s and
+  accumulates per-grain `(session_id, model, provider, base_url, mode, task)`
+  counters: `known` (monotonic, never drops — what the client sees),
+  `last_db` (diff base), `live_db` (last poll). Negative deltas add the new
+  DB value (re-baseline), vanished rows log `removed`/`reappeared` events in
+  `ledger_events`. One ledger DB per profile: `/root/token-stats-ledger/<profile>/ledger.db`.
+- **Plugin backend** (`plugin_pkg/token-stats/`) mounts under
+  `/api/plugins/token-stats/` (official plugin backend — `ctx.rest` from the
+  desktop plugin reaches it; survives Hermes updates since it lives in
+  `~/.hermes/plugins/`):
+
+| Route | Parameters | Returns |
+|---|---|---|
+| `/api/plugins/token-stats/ledger` | `days`, `since`, `limit`, `session_id`, `models`, `profile` | `sessions[]` + `model_usage[]` — shape-compatible with `usage.history` (known counters + state.db metadata) |
+| `/api/plugins/token-stats/events` | `session_id`, `limit`, `profile` | anomaly history (decrease/removed/reappeared) |
+| `/api/plugins/token-stats/profiles` | — | available ledger profiles |
+| `/api/plugins/token-stats/health` | `profile` | daemon liveness, rows, last poll age |
+
+The RPCs (`usage.history`/`usage.totals`) remain as **legacy fallback** for
+the client (old gateways, OAuth remotes where `ctx.rest` is a no-op).
+
 ## Layout
 
 ```
 tui_gateway/methods_usage_history.py   # Gateway module (HandlerRegistry pattern, like methods_session.py)
+ledger/schema.sql                      # Ledger DB schema (ledger_rows, ledger_events; WAL)
+ledger/engine.py                       # Delta engine: known/last_db/live_db per grain+counter
+ledger/poller.py                       # state.db → rows mapping (read-only snapshot)
+ledger/daemon.py                       # 15-s poll loop, per-profile discovery, --once mode
+ledger/token-stats-ledger.service      # systemd unit
+plugin_pkg/token-stats/                # Plugin backend package (deploys to ~/.hermes/plugins/token-stats/)
+test_ledger_engine.py                  # Delta-rule unit tests
+test_plugin_api.py                     # Backend route tests (TestClient, isolated ENV)
 install.sh                             # Idempotent installer (module copy + server.py hooks)
 ```
 
