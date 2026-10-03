@@ -32,13 +32,25 @@ def fake_state_db(path):
             cache_read_tokens INTEGER, cache_write_tokens INTEGER,
             reasoning_tokens INTEGER, estimated_cost_usd REAL,
             actual_cost_usd REAL, model TEXT, billing_provider TEXT,
-            billing_mode TEXT, hidden INTEGER DEFAULT 0
+            billing_mode TEXT, hidden INTEGER DEFAULT 0,
+            model_config TEXT, parent_session_id TEXT
         );
     """)
     db.execute(
         "INSERT INTO sessions (id, title, source, started_at, last_activity_at, "
         "model, cache_write_tokens, reasoning_tokens, estimated_cost_usd) "
         "VALUES ('s1', 'Test Session', 'desktop', 1000.0, 1500.0, 'm', 10, 5, 0.42)")
+    # subagent child: source tag (v30) + delegate marker (v16)
+    db.execute(
+        "INSERT INTO sessions (id, title, source, started_at, last_activity_at, "
+        "model, model_config, parent_session_id) "
+        "VALUES ('sa1', 'Subagent Task', 'subagent', 1200.0, 1300.0, 'm', "
+        "'{\"_delegate_from\": \"s1\"}', 's1')")
+    # compression split: parent_session_id set but NOT a subagent
+    db.execute(
+        "INSERT INTO sessions (id, title, source, started_at, last_activity_at, "
+        "model, parent_session_id) "
+        "VALUES ('cs1', 'Split', 'desktop', 1100.0, 1200.0, 'm', 's1')")
     db.commit()
     db.close()
 
@@ -157,6 +169,28 @@ class TestPluginApi(unittest.TestCase):
         assert m["input_tokens"] == 100 and m["cache_read_tokens"] == 10
         assert m["output_tokens"] == 5 and m["api_calls"] == 1
         assert m["live_in"] == 100  # ledger extras present
+
+    def test_subagent_flagging(self):
+        # Subagent sessions carry is_subagent + parent; compression splits
+        # (parent_session_id set but no source/marker) must NOT be flagged.
+        self.env.seed([
+            {"sid": "s1", "known_in": 100},
+            {"sid": "sa1", "known_in": 50},
+            {"sid": "cs1", "known_in": 30},
+            {"sid": "s2", "known_in": 20},  # ledger-only → no meta at all
+        ])
+        r = self.client.get("/api/plugins/token-stats/ledger?days=0")
+        assert r.status_code == 200
+        sess = {s["id"]: s for s in r.json()["sessions"]}
+        assert sess["sa1"]["is_subagent"] is True
+        assert sess["sa1"]["parent_session_id"] == "s1"
+        assert sess["cs1"]["is_subagent"] is False
+        assert sess["cs1"]["parent_session_id"] == "s1"
+        assert sess["s1"]["is_subagent"] is False
+        assert sess["s1"]["parent_session_id"] is None
+        # ledger-only session: safe defaults
+        assert sess["s2"]["is_subagent"] is False
+        assert sess["s2"]["parent_session_id"] is None
 
     def test_ledger_session_id_filter(self):
         self.env.seed([

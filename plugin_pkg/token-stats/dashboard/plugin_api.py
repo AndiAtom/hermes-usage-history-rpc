@@ -95,11 +95,20 @@ def _session_meta():
                    started_at, ended_at,
                    COALESCE(last_activity_at, ended_at, started_at) AS last_active,
                    message_count, model, billing_provider, billing_mode,
-                   cache_write_tokens, reasoning_tokens, estimated_cost_usd
+                   cache_write_tokens, reasoning_tokens, estimated_cost_usd,
+                   parent_session_id,
+                   COALESCE(json_extract(model_config, '$._delegate_from'), '')
+                     AS delegate_from
               FROM sessions
             """
         ):
-            out[r["id"]] = dict(r)
+            d = dict(r)
+            # Subagent detection (Hermes migrations v16/v30): source tag or
+            # the $._delegate_from marker in model_config. parent_session_id
+            # ALONE is NOT sufficient — compression lineage splits use it too.
+            d["is_subagent"] = bool(
+                d.get("source") == "subagent" or d.get("delegate_from"))
+            out[r["id"]] = d
         return out
     finally:
         conn.close()
@@ -201,6 +210,9 @@ async def ledger(days: int = 30, since: float = 0, until: float = 0,
             "model": m.get("model", rs[0]["model"] if rs else ""),
             "billing_provider": m.get("billing_provider"),
             "billing_mode": m.get("billing_mode"),
+            # subagent extras (None for ledger-only sessions)
+            "is_subagent": m.get("is_subagent", False),
+            "parent_session_id": m.get("parent_session_id"),
             # ledger extras
             "ledger_only": sid not in meta,
             "last_poll": last_active,
