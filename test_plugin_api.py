@@ -186,6 +186,44 @@ class TestPluginApi(unittest.TestCase):
         assert ids == ["recent"], ids  # stale session outside 30d window
         assert all(m["session_id"] == "recent" for m in j["model_usage"])
 
+    def test_ledger_until_exclusive_upper_bound(self):
+        # Calendar-window support: since (inclusive) .. until (EXCLUSIVE).
+        # Sessions with activity in [since, until) pass; anything at or
+        # after `until` is filtered out (e.g. weekend activity outside
+        # the workweek window).
+        self.env.seed([
+            {"sid": "work_mon", "known_in": 1, "first_seen": 2000.0,
+             "last_poll": 2000.0},
+            {"sid": "work_fri_late", "known_in": 2, "first_seen": 2999.5,
+             "last_poll": 2999.5},
+            {"sid": "weekend_sun", "known_in": 4, "first_seen": 3000.0,
+             "last_poll": 3000.0},
+            {"sid": "before_window", "known_in": 8, "first_seen": 1000.0,
+             "last_poll": 1000.0},
+        ])
+        r = self.client.get(
+            "/api/plugins/token-stats/ledger?days=0"
+            "&since=1500&until=3000&limit=10")
+        j = r.json()
+        ids = {s["id"] for s in j["sessions"]}
+        assert ids == {"work_mon", "work_fri_late"}, ids
+        # `until` boundary is exclusive: activity == 3000.0 is out
+        assert all(m["session_id"] in ids for m in j["model_usage"])
+
+    def test_ledger_since_alone_lower_bound(self):
+        # since without until: open-ended lower bound (e.g. month start)
+        self.env.seed([
+            {"sid": "old", "known_in": 1, "first_seen": 100.0,
+             "last_poll": 100.0},
+            {"sid": "new", "known_in": 2, "first_seen": 5000.0,
+             "last_poll": 5000.0},
+        ])
+        r = self.client.get(
+            "/api/plugins/token-stats/ledger?days=0&since=1000")
+        j = r.json()
+        ids = {s["id"] for s in j["sessions"]}
+        assert ids == {"new"}, ids
+
     def test_unknown_profile_404(self):
         r = self.client.get(
             "/api/plugins/token-stats/ledger?profile=nope")

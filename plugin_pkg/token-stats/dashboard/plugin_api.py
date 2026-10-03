@@ -112,14 +112,19 @@ async def profiles():
 
 
 @router.get("/ledger")
-async def ledger(days: int = 30, since: float = 0, limit: int = 200,
-                session_id: str = "", models: bool = True,
+async def ledger(days: int = 30, since: float = 0, until: float = 0,
+                limit: int = 200, session_id: str = "", models: bool = True,
                 profile: str = "default"):
     """Monotonic known counters, shape-compatible with usage.history.
 
     Returns sessions[] (one entry per session_id, sums of known counters,
     plus state.db metadata where available) and model_usage[] (per-grain
     ledger rows with known + live values).
+
+    Window: sessions with activity in [since, until). `since`/`until` are
+    epoch seconds; `since` is INCLUSIVE, `until` EXCLUSIVE (0 = open).
+    Explicit since/until (calendar windows, e.g. month start or Friday
+    23:59:59) take precedence; otherwise `days` rolls back from now.
     """
     import time as _time
     from fastapi import HTTPException
@@ -133,7 +138,14 @@ async def ledger(days: int = 30, since: float = 0, limit: int = 200,
             },
         )
     now = _time.time()
-    cutoff = since if since else (now - days * 86400 if days and days > 0 else 0)
+    if since:
+        cutoff = since
+    else:
+        cutoff = now - days * 86400 if days and days > 0 else 0
+    # Optional EXCLUSIVE upper bound (calendar windows, e.g. workweek
+    # Mon 0:00 → Sat 0:00). 0 = open. Also applies to the days-window
+    # path, so the shape of the filter stays uniform.
+    upper = until if until else 0
 
     rows = _ledger_rows(profile, session_id=session_id)
     if rows is None:
@@ -156,9 +168,10 @@ async def ledger(days: int = 30, since: float = 0, limit: int = 200,
             return m["last_active"]
         return min(r["first_seen"] for r in by_sid[sid])
 
-    # Day-window filtering (days/since) on REAL activity — same
-    # semantics as usage.history's window.
-    sids = [s for s in by_sid if activity(s) >= cutoff]
+    # Window filtering (since/days/until) on REAL activity — same
+    # semantics as usage.history's window. `until` is exclusive.
+    sids = [s for s in by_sid
+            if activity(s) >= cutoff and (not upper or activity(s) < upper)]
     if session_id:
         sids = [s for s in sids if s == session_id]
     sids = sorted(sids, key=activity, reverse=True)
