@@ -117,3 +117,7 @@ sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"   # same before/afte
 - `state.db` is per-profile; the `profile` parameter scaffolding is prepared in the handler
 - Upstream candidate: cleanly submittable as a PR against NousResearch/hermes-agent
   (HandlerRegistry pattern, no writes, no new dependencies)
+
+## License
+
+[MIT](LICENSE) — © 2026 Andreas Frede
