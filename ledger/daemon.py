@@ -46,18 +46,28 @@ def open_ledger(profile, base):
     return db
 
 
-def run_cycle(base):
-    """Ein Zyklus über alle Profile. Gibt (Profil, Row-Zahl)-Paare zurück."""
+def run_cycle(base, connections=None):
+    """Ein Zyklus über alle Profile. Gibt (Profil, Row-Zahl)-Paare zurück.
+
+    v0.5.0: connections ist ein dict {profil: (db, engine)} über Zyklen
+    hinweg wiederverwendet — das ständige open/close pro Zyklus war der
+    Hauptteil der verbleibenden Disk-Writes (~38 KiB/Poll: shm-Init +
+    WAL-Anlegen + Close-Checkpoint je Zyklus). WAL erlaubt den parallelen
+    Read-only-Zugriff des Plugin-Backends, ein Offenhalten ist sicher.
+    Neue Profile (Discovery) werden beim ersten Sehen geöffnet.
+    """
+    if connections is None:
+        connections = {}
     results = []
     for profile, state_path in sorted(discover_state_dbs().items()):
         if not os.path.exists(state_path):
             continue
-        db = open_ledger(profile, base)
-        try:
-            n = poll_profile(state_path, LedgerEngine(db))
-            results.append((profile, n))
-        finally:
-            db.close()
+        if profile not in connections:
+            db = open_ledger(profile, base)
+            connections[profile] = (db, LedgerEngine(db))
+        db, engine = connections[profile]
+        n = poll_profile(state_path, engine)
+        results.append((profile, n))
     return results
 
 
@@ -65,11 +75,13 @@ def main():
     interval = int(os.environ.get("LEDGER_INTERVAL", "15"))
     base = os.environ.get("LEDGER_BASE", DEFAULT_BASE)
     once = "--once" in sys.argv
+    connections = {}  # {profil: (db, engine)} — über Zyklen gehalten (v0.5.0)
 
     while True:
         started = time.monotonic()
         try:
-            for profile, n in run_cycle(base):
+            # Connections über Zyklen halten (v0.5.0 Write-Sparsamkeit)
+            for profile, n in run_cycle(base, connections):
                 ts = time.strftime("%Y-%m-%d %H:%M:%S")
                 print(f"[ledger] {ts} profile={profile} rows={n}", flush=True)
         except Exception as e:  # noqa: BLE001 — Daemon stirbt nicht an einem Zyklus

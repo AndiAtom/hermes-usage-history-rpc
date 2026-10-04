@@ -49,7 +49,15 @@ class LedgerEngine:
         )
 
     def _remove_counter(self, key, row, now):
-        """Row fehlt im Snapshot → last_db NULL, removed-Events pro Counter."""
+        """Row fehlt im Snapshot → last_db NULL, removed-Events pro Counter.
+
+        v0.5.0: idempotent — ist last_db bereits NULL (Row dauerhaft
+        ge-cuttet, z.B. archiviert), passiert NICHTS. Vorher wurde jede
+        ge-cuttete Row in JEDEM Zyklus erneut geupdated (679 Rows × 15 s
+        = der Hauptteil der Disk-Writes).
+        """
+        if all(row[f"last_db_{c}"] is None for c in COUNTERS):
+            return
         for c in COUNTERS:
             if row[f"last_db_{c}"] is not None:
                 self._log_event(key[0], "removed", c, row[f"last_db_{c}"], None)
@@ -98,14 +106,34 @@ class LedgerEngine:
                 )
                 continue
 
-            # Folge-Poll: je Counter die Delta-Regel
+            # Folge-Poll: je Counter die Delta-Regel.
+            # v0.5.0 Write-Sparsamkeit: last_poll wird NUR noch bei
+            # realer Änderung gebumpt (voller Row-Update), Liveness
+            # übernimmt ledger_meta.heartbeat. Bei unveränderten Werten
+            # (diff=0, diff<0 ohne known-Änderung ist nicht möglich) wird
+            # GAR NICHTS geschrieben — der Daemon schreibt also in einem
+            # stillen 15s-Zyklus nur den Heartbeat (~16 Byte).
             sets, vals = [], []
+            dirty = False
             for c in COUNTERS:
                 live = r.get(c, 0)
                 last = existing[f"last_db_{c}"]
                 if last is None:
-                    # Reappear: Baseline ohne Delta, nur loggen
+                    # Reappear: Baseline ohne Delta. ABER: liegt der DB-Wert
+                    # über allem je Gesehenen (live > known), sind die
+                    # Differenz-Tokens nachweislich neu — nachziehen
+                    # (v0.5.0: mit dem Archive-Cut-Off ist der Fall
+                    # "Row war weg und hat zwischenzeitlich gewachsen"
+                    # erreichbar; known bleibt monoton, Doppelzählen ist
+                    # ausgeschlossen, weil known die Obergrenze ist).
                     self._log_event(key[0], "reappeared", c, None, live)
+                    if live > (existing[f"known_{c}"] or 0):
+                        self.db.execute(
+                            f"UPDATE ledger_rows SET known_{c} = ? "
+                            f"WHERE {_KEY_WHERE}",
+                            (live,) + key,
+                        )
+                    dirty = True  # Baseline neu verankern
                 else:
                     diff = live - last
                     if diff < 0:
@@ -115,24 +143,29 @@ class LedgerEngine:
                             f"WHERE {_KEY_WHERE}",
                             (live,) + key,
                         )
-                    else:
+                        dirty = True
+                    elif diff > 0:
                         self.db.execute(
                             f"UPDATE ledger_rows SET known_{c} = known_{c} + ? "
                             f"WHERE {_KEY_WHERE}",
                             (diff,) + key,
                         )
+                        dirty = True
+                    # diff == 0 → No-op (Andi-Regel 24.09.2026): weder known
+                    # noch Baseline ändern → auch kein Row-Update nötig.
                 sets.append(f"last_db_{c} = ?")
                 vals.append(live)
                 sets.append(f"live_db_{c} = ?")
                 vals.append(live)
 
-            sets.append("last_poll = ?")
-            vals.append(now)
-            vals.extend(key)
-            self.db.execute(
-                f"UPDATE ledger_rows SET {', '.join(sets)} WHERE {_KEY_WHERE}",
-                vals,
-            )
+            if dirty:
+                sets.append("last_poll = ?")
+                vals.append(now)
+                vals.extend(key)
+                self.db.execute(
+                    f"UPDATE ledger_rows SET {', '.join(sets)} WHERE {_KEY_WHERE}",
+                    vals,
+                )
 
         if snapshot:
             # Alle bisherigen Rows, die NICHT im Snapshot waren → removed
@@ -146,6 +179,20 @@ class LedgerEngine:
         self.db.commit()
 
     # ── read API ──────────────────────────────────────────────────────
+
+    def heartbeat(self):
+        """Daemon-Heartbeat: ledger_meta['heartbeat'] = now (UPSERT, 1 Row).
+
+        v0.5.0: Frische-Signal für /health — last_poll friert seit dem
+        Archive-Cut-Off ein, sobald alle Sessions archiviert sind.
+        """
+        now = time.time()
+        self.db.execute(
+            "INSERT INTO ledger_meta (key, value) VALUES ('heartbeat', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (now,),
+        )
+        self.db.commit()
 
     def get(self, session_id, model, task, billing_provider="", billing_base_url="", billing_mode=""):
         row = self.db.execute(

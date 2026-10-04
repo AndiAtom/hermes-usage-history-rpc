@@ -36,3 +36,12 @@ CREATE TABLE IF NOT EXISTS ledger_events (
     db_now INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_events_sid ON ledger_events(session_id, ts DESC);
+
+-- Daemon-Heartbeat (v0.5.0): 1 Row, pro Zyklus geupdated. Ersatz für
+-- MAX(last_poll) als Frische-Signal — seit dem Archive-Cut-Off friert
+-- last_poll ein, sobald ALLE Sessions archiviert sind, obwohl der Daemon
+-- läuft. Der Heartbeat schreibt ~16 Byte/Zyklus statt 133 KiB.
+CREATE TABLE IF NOT EXISTS ledger_meta (
+    key TEXT PRIMARY KEY,
+    value REAL NOT NULL
+);

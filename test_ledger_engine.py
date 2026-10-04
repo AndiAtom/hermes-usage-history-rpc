@@ -168,6 +168,53 @@ class TestDeltaRules(unittest.TestCase):
         assert self.get()["known_in"] == 100
         assert self.eng.events("s1") == []
 
+    # ── v0.5.0 write-sparsity ────────────────────────────────────────
+
+    def test_no_delta_poll_writes_nothing(self):
+        """diff=0-Zykklus: kein Row-Update — last_poll bleibt stehen.
+
+        Vor v0.5.0 wurde last_poll für JEDE Row in JEDEM Zyklus gebumpt
+        (679 archivierte + 95 aktive Rows × 15 s = 254 KiB/Poll Disk).
+        Jetzt: Liveness = ledger_meta.heartbeat, last_poll = letzte
+        ÄNDERUNG. Verifikation über die UPDATE-Zählung (rowcount ist bei
+        UPDATE ... SET x = x immer 1, daher hier via total_changes).
+        """
+        import time as _t
+        self.eng.apply_poll([row(in_=100)])
+        before = self.db.total_changes
+        before_poll = self.get()["last_poll"]
+        _t.sleep(0.01)
+        self.eng.apply_poll([row(in_=100)])  # diff = 0
+        assert self.db.total_changes == before  # kein einziges UPDATE
+        assert self.get()["last_poll"] == before_poll  # unverändert
+
+    def test_delta_poll_updates_last_poll(self):
+        import time as _t
+        self.eng.apply_poll([row(in_=100)])
+        _t.sleep(0.01)
+        before_poll = self.get()["last_poll"]
+        self.eng.apply_poll([row(in_=150)])  # diff = +50
+        r = self.get()
+        assert r["known_in"] == 150
+        assert r["last_poll"] > before_poll  # Änderung → last_poll bumped
+
+    def test_repeated_empty_snapshot_is_idempotent(self):
+        """Remove-Pfad: zweiter leerer Snapshot darf NICHTS mehr schreiben.
+
+        Vor v0.5.0 re-updatete der Snapshot-Loop jede fehlende Row in
+        jedem Zyklus (removed-Flut dauerhaft). Jetzt: nur der ERSTE
+        Übergang schreibt (Events + last_db=NULL).
+        """
+        self.eng.apply_poll([row(in_=100)])
+        self.eng.apply_poll([], snapshot=True)  # removed
+        events_after_first = len(self.eng.events("s1"))
+        before = self.db.total_changes
+        for _ in range(3):
+            self.eng.apply_poll([], snapshot=True)  # bleibt leer
+        assert self.db.total_changes == before  # keine weiteren Writes
+        assert len(self.eng.events("s1")) == events_after_first
+        assert self.get()["known_in"] == 100  # Wert bleibt
+
 
 if __name__ == "__main__":
     unittest.main()

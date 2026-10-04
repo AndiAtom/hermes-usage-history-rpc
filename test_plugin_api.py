@@ -126,6 +126,35 @@ class TestPluginApi(unittest.TestCase):
         j = r.json()
         assert j["ok"] is False and "available" in j
 
+    def test_health_heartbeat_source(self):
+        # v0.5.0: heartbeat in ledger_meta wins over MAX(last_poll) —
+        # all-archived freezes last_poll, the daemon still runs.
+        import time as _t
+        self.env.seed([{"sid": "s1", "known_in": 100, "last_poll": 1000.0}])
+        ldb = os.path.join(self.base_ledger())
+        db = sqlite3.connect(ldb)
+        db.execute("INSERT INTO ledger_meta (key, value) VALUES ('heartbeat', ?)",
+                   (_t.time() - 5,))
+        db.commit(); db.close()
+        r = self.client.get("/api/plugins/token-stats/health")
+        j = r.json()
+        assert j["ok"] is True, j
+        assert j["source"] == "heartbeat", j
+        assert j["age_seconds"] < 30, j
+
+    def test_health_last_poll_fallback_when_no_meta(self):
+        # Upgrade-Pfad: ledger.db ohne ledger_meta (vor v0.5.0 erzeugt)
+        # → Fallback auf MAX(last_poll)
+        self.env.seed([{"sid": "s1", "known_in": 100, "last_poll": 1000.0}])
+        r = self.client.get("/api/plugins/token-stats/health")
+        j = r.json()
+        # last_poll=1000.0 ist uralt → not ok, aber der Fallback greift
+        assert j["ok"] is False, j
+        assert j["source"] == "last_poll_fallback", j
+
+    def base_ledger(self):
+        return os.path.join(self.env.base, "default", "ledger.db")
+
     def test_ledger_sessions_shape(self):
         # s1 has state.db metadata (last_activity_at=1500); s2 is
         # ledger-only → activity falls back to first_seen (1000.0).

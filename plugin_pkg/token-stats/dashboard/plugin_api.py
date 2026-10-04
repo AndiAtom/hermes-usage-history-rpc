@@ -270,7 +270,13 @@ async def events(session_id: str, limit: int = 50, profile: str = "default"):
 
 @router.get("/health")
 async def health(profile: str = "default"):
-    """Daemon liveness: row count + freshness of the last poll."""
+    """Daemon liveness: row count + freshness of the last poll.
+
+    v0.5.0: freshness comes from ledger_meta.heartbeat (written every
+    cycle, ~16 bytes). MAX(last_poll) freezes once ALL sessions are
+    archived (archive cut-off) — it is kept only as a fallback for
+    ledger DBs created before the heartbeat existed.
+    """
     path = os.path.join(LEDGER_BASE, profile, "ledger.db")
     if not os.path.exists(path):
         return {"ok": False, "profile": profile,
@@ -279,7 +285,10 @@ async def health(profile: str = "default"):
     conn = _ro(path)
     try:
         rows = conn.execute("SELECT COUNT(*) FROM ledger_rows").fetchone()[0]
-        last_poll = conn.execute(
+        hb = conn.execute(
+            "SELECT value FROM ledger_meta WHERE key = 'heartbeat'"
+        ).fetchone()
+        last_poll = hb[0] if hb else conn.execute(
             "SELECT COALESCE(MAX(last_poll), 0) FROM ledger_rows"
         ).fetchone()[0]
         age = _time.time() - last_poll if last_poll else None
@@ -289,6 +298,7 @@ async def health(profile: str = "default"):
             "rows": rows,
             "last_poll": last_poll,
             "age_seconds": round(age, 1) if age is not None else None,
+            "source": "heartbeat" if hb else "last_poll_fallback",
         }
     finally:
         conn.close()
