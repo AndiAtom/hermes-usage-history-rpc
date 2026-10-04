@@ -34,7 +34,9 @@ Data sources: `sessions` (lifetime totals per session) + `session_model_usage`
   `live_db` (last poll). Negative deltas add the new DB value
   (re-baseline), vanished rows log `removed`/`reappeared` events in
   `ledger_events`. One ledger DB per profile:
-  `/root/token-stats-ledger/<profile>/ledger.db`.
+  `~/token-stats-ledger/<profile>/ledger.db` (`LEDGER_BASE`, default below
+  the invoking user's home — for a root systemd service that is
+  `/root/token-stats-ledger`).
   **Archive cut-off (v0.5.0):** rows of archived sessions
   (`sessions.archived = 1`) whose last usage write is older than 1 h
   (`ARCHIVE_GRACE_SECONDS`) drop out of the poll snapshot — their `known`

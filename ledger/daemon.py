@@ -19,7 +19,7 @@ from .engine import LedgerEngine
 from .poller import poll_profile
 
 HERMES_HOME = os.path.expanduser("~/.hermes")
-DEFAULT_BASE = "/root/token-stats-ledger"
+DEFAULT_BASE = os.path.expanduser("~/token-stats-ledger")
 
 
 def discover_state_dbs():

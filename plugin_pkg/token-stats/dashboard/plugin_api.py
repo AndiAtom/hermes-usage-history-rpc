@@ -27,7 +27,7 @@ from fastapi import APIRouter
 
 router = APIRouter()
 
-LEDGER_BASE = os.environ.get("LEDGER_BASE", "/root/token-stats-ledger")
+LEDGER_BASE = os.environ.get("LEDGER_BASE", os.path.expanduser("~/token-stats-ledger"))
 STATE_DB = os.environ.get(
     "LEDGER_STATE_DB", os.path.expanduser("~/.hermes/state.db")
 )
