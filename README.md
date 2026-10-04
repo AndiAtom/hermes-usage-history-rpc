@@ -120,4 +120,4 @@ sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"   # same before/afte
 
 ## License
 
-[MIT](LICENSE) — © 2026 Andreas Frede
+[MIT](LICENSE) — © 2026 AndiAtom
