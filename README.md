@@ -27,12 +27,26 @@ Data sources: `sessions` (lifetime totals per session) + `session_model_usage`
 "largest seen value" heuristics lose deltas. The ledger fixes that:
 
 - **Daemon** (`ledger/daemon.py`, systemd unit `token-stats-ledger.service`)
-  polls every profile's `state.db` read-only (`mode=ro`) every 15 s and
-  accumulates per-grain `(session_id, model, provider, base_url, mode, task)`
-  counters: `known` (monotonic, never drops — what the client sees),
-  `last_db` (diff base), `live_db` (last poll). Negative deltas add the new
-  DB value (re-baseline), vanished rows log `removed`/`reappeared` events in
-  `ledger_events`. One ledger DB per profile: `/root/token-stats-ledger/<profile>/ledger.db`.
+  polls every profile's `state.db` read-only (`mode=ro`) every 15 s
+  (configurable via `LEDGER_INTERVAL`) and accumulates per-grain
+  `(session_id, model, provider, base_url, mode, task)` counters: `known`
+  (monotonic, never drops — what the client sees), `last_db` (diff base),
+  `live_db` (last poll). Negative deltas add the new DB value
+  (re-baseline), vanished rows log `removed`/`reappeared` events in
+  `ledger_events`. One ledger DB per profile:
+  `/root/token-stats-ledger/<profile>/ledger.db`.
+  **Archive cut-off (v0.5.0):** rows of archived sessions
+  (`sessions.archived = 1`) whose last usage write is older than 1 h
+  (`ARCHIVE_GRACE_SECONDS`) drop out of the poll snapshot — their `known`
+  counters freeze at the final value (removed-path) and stay visible.
+  Resume/unarchive re-adds them (reappear-path, baseline without delta;
+  a DB value above `known` pulls the delta in). Measured effect:
+  ~95 % fewer disk writes (133 KiB → 7 KiB per poll).
+  **Write sparsity (v0.5.0):** cycles with no changes write nothing but a
+  heartbeat row (`ledger_meta.heartbeat`, ~16 bytes) — `last_poll` on a
+  row means "last change", daemon liveness is the heartbeat. Ledger DB
+  connections stay open across cycles (WAL allows concurrent backend
+  readers).
 - **Plugin backend** (`plugin_pkg/token-stats/`) mounts under
   `/api/plugins/token-stats/` (official plugin backend — `ctx.rest` from the
   desktop plugin reaches it; survives Hermes updates since it lives in
@@ -40,10 +54,10 @@ Data sources: `sessions` (lifetime totals per session) + `session_model_usage`
 
 | Route | Parameters | Returns |
 |---|---|---|
-| `/api/plugins/token-stats/ledger` | `days`, `since`, `limit`, `session_id`, `models`, `profile` | `sessions[]` + `model_usage[]` — shape-compatible with `usage.history` (known counters + state.db metadata) |
+| `/api/plugins/token-stats/ledger` | `days`, `since` (inclusive), `until` (EXCLUSIVE upper bound, calendar windows), `limit`, `session_id`, `models`, `profile` | `sessions[]` + `model_usage[]` — shape-compatible with `usage.history` (known counters + state.db metadata, window/filter on real activity) |
 | `/api/plugins/token-stats/events` | `session_id`, `limit`, `profile` | anomaly history (decrease/removed/reappeared) |
 | `/api/plugins/token-stats/profiles` | — | available ledger profiles |
-| `/api/plugins/token-stats/health` | `profile` | daemon liveness, rows, last poll age |
+| `/api/plugins/token-stats/health` | `profile` | daemon liveness via heartbeat (`source: heartbeat`), rows, age; `last_poll` fallback for pre-v0.5.0 ledger DBs |
 
 The RPCs (`usage.history`/`usage.totals`) remain as **legacy fallback** for
 the client (old gateways, OAuth remotes where `ctx.rest` is a no-op).
@@ -52,13 +66,14 @@ the client (old gateways, OAuth remotes where `ctx.rest` is a no-op).
 
 ```
 tui_gateway/methods_usage_history.py   # Gateway module (HandlerRegistry pattern, like methods_session.py)
-ledger/schema.sql                      # Ledger DB schema (ledger_rows, ledger_events; WAL)
-ledger/engine.py                       # Delta engine: known/last_db/live_db per grain+counter
-ledger/poller.py                       # state.db → rows mapping (read-only snapshot)
-ledger/daemon.py                       # 15-s poll loop, per-profile discovery, --once mode
+ledger/schema.sql                      # Ledger DB schema (ledger_rows, ledger_events, ledger_meta; WAL)
+ledger/engine.py                       # Delta engine: known/last_db/live_db per grain+counter (v0.5.0: write-sparse)
+ledger/poller.py                       # state.db → rows mapping (read-only snapshot, v0.5.0: archive cut-off)
+ledger/daemon.py                       # 15-s poll loop, per-profile discovery, --once mode (LEDGER_INTERVAL env)
 ledger/token-stats-ledger.service      # systemd unit
 plugin_pkg/token-stats/                # Plugin backend package (deploys to ~/.hermes/plugins/token-stats/)
-test_ledger_engine.py                  # Delta-rule unit tests
+test_ledger_engine.py                  # Delta-rule unit tests (incl. write-sparsity regressions)
+test_ledger_poller.py                  # Poller cut-off/reappear/heartbeat tests (v0.5.0)
 test_plugin_api.py                     # Backend route tests (TestClient, isolated ENV)
 install.sh                             # Idempotent installer (module copy + server.py hooks)
 ```
