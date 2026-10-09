@@ -76,9 +76,14 @@ fi
 # ── 2. Enable the plugin in config.yaml (surgical text insert) ────────
 # NO YAML-library round-trip: ruamel reflows the ENTIRE file (indent flips,
 # line wrapping, quote styles) even though it preserves comments — verified
-# the hard way on a live config. Instead: insert exactly one list item
-# after the last item of the plugins.enabled list, leaving every other
-# byte untouched.
+# the hard way on a live config. Instead: insert exactly one list item,
+# leaving every other byte untouched.
+# Hardened for FOREIGN configs (v0.6.2): finds `enabled:` anywhere in the
+# plugins block (any key order, comments in between), creates the section
+# or the key when missing, handles flow-style lists ([a, b]) and CRLF line
+# endings, and REFUSES unrecognized layouts loudly instead of guessing —
+# the ruamel validation afterwards is the hard guarantee that nothing
+# broken ever reaches the config.
 CONFIG="$HERMES_HOME/config.yaml"
 [ -f "$CONFIG" ] || die "config not found: $CONFIG"
 if grep -qE '^\s*-\s*["'"'"']?token-stats["'"'"']?\s*$' "$CONFIG"; then
@@ -93,29 +98,103 @@ else
   fi
   TMP="$(mktemp)"; trap 'rm -f "$TMP"' EXIT
   cat > "$TMP" <<'PYEOF'
-import sys
+import re, sys
+
+PLUGIN = "token-stats"
+ITEM = "    - " + PLUGIN + "\n"
 path = sys.argv[1]
-lines = open(path).read().splitlines(keepends=True)
+raw = open(path, newline="").read()
+crlf = "\r\n" in raw
+lines = raw.splitlines(keepends=True)
+eol = "\r\n" if crlf else "\n"
 out, i, inserted = [], 0, False
+
+
+def norm(s):
+    return s.rstrip("\r\n")
+
+
+def item_text(s):
+    # list item body after '- ', quotes stripped
+    return s.strip()[2:].strip().strip("'\"").strip()
+
+
 while i < len(lines):
-    out.append(lines[i])
-    # plugins: block -> '  enabled:' key (2-space indent, Hermes convention)
-    if lines[i].rstrip('\n') == '  enabled:' and any(
-            l.rstrip('\n') == 'plugins:' for l in lines[max(0, i - 3):i]):
+    line = lines[i]
+    out.append(line)
+
+    # Case A: plugins: block -> locate `enabled:` key ANYWHERE inside the
+    # block (any key order, comments between keys). Indent-based: a new
+    # top-level key (indent 0) or a key at plugins' own indent ends the block.
+    if norm(line) == "plugins:":
+        p_indent = 0  # top-level block key by definition
         j = i + 1
-        while j < len(lines) and lines[j].lstrip().startswith('- '):
-            out.append(lines[j]); j += 1
-        if j == i + 1:
-            sys.exit('[error] plugins.enabled found but empty — add "    - token-stats" by hand')
-        out.append('    - token-stats\n')
-        inserted = True
-        i = j
-        continue
+        block_end = len(lines)
+        enabled_at = None
+        while j < len(lines):
+            l = norm(lines[j])
+            if not l or l.lstrip().startswith("#"):
+                j += 1
+                continue
+            indent = len(l) - len(l.lstrip())
+            if indent <= p_indent and not l.lstrip().startswith("- "):
+                block_end = j
+                break
+            if re.match(r"^\s*enabled:\s*(.*)$", l):
+                # only the plugins' OWN enabled key (same indent level as
+                # sibling keys, not nested deeper)
+                if enabled_at is None:
+                    enabled_at = j
+            j += 1
+        if enabled_at is not None:
+            e = lines[enabled_at]
+            rest = re.match(r"^\s*enabled:\s*(.*)$", norm(e)).group(1).strip()
+            if rest.startswith("["):
+                # flow style: enabled: [a, b] -> insert into the brackets
+                inner = rest[1:-1].strip() if rest.endswith("]") else None
+                if inner is None:
+                    sys.exit("[error] plugins.enabled flow list not closed on one line — edit by hand")
+                items = [x.strip() for x in inner.split(",") if x.strip()]
+                if any(item_text("  - " + x) == PLUGIN for x in items):
+                    print("[ok] plugins.enabled already contains token-stats (flow)")
+                    sys.exit(0)
+                items.append(PLUGIN)
+                indent = len(norm(e)) - len(norm(e).lstrip())
+                new = " " * indent + "enabled: [" + ", ".join(items) + "]"
+                lines[enabled_at] = new + eol
+                open(path, "w", newline="").writelines(lines)
+                sys.exit(0)
+            # block style: append after the last item of the list
+            k = enabled_at + 1
+            while k < block_end and norm(lines[k]).lstrip().startswith("- "):
+                k += 1
+            if k == enabled_at + 1:
+                sys.exit("[error] plugins.enabled found but empty — add '    - token-stats' by hand")
+            item_indent = re.match(r"^\s*-", norm(lines[enabled_at + 1])).group(0)
+            out = lines[:k] + [item_indent.replace("-", "- " + PLUGIN) + eol] + lines[k:]
+            open(path, "w", newline="").writelines(out)
+            print("[ok] plugins.enabled += token-stats (backup: config.yaml.bak-token-stats)")
+            sys.exit(0)
+        # enabled: missing in the block -> insert it right after plugins:,
+        # matching the block's key indent (or default 2 spaces)
+        key_indent = "  "
+        for l in lines[i + 1:block_end]:
+            n = norm(l)
+            if n and not n.lstrip().startswith("#") and not n.lstrip().startswith("- "):
+                key_indent = n[: len(n) - len(n.lstrip())]
+                break
+        out = lines[: i + 1] + [key_indent + "enabled:" + eol, key_indent + "  - " + PLUGIN + eol] + lines[i + 1:]
+        open(path, "w", newline="").writelines(out)
+        print("[ok] plugins.enabled created under plugins: (backup: config.yaml.bak-token-stats)")
+        sys.exit(0)
+
     i += 1
-if not inserted:
-    sys.exit('[error] plugins.enabled list not found in config.yaml — add "    - token-stats" under plugins: enabled: by hand')
-open(path, 'w').write(''.join(out))
-print('[ok] plugins.enabled += token-stats (backup: config.yaml.bak-token-stats)')
+
+# Case B: no plugins: block at all -> append section at EOF (fresh installs).
+new_eol = eol if (lines and lines[-1].endswith(eol)) else ("\r\n" if crlf else "\n")
+out = lines + ["", "plugins:" + new_eol, "  enabled:" + new_eol, "    - " + PLUGIN + new_eol]
+open(path, "w", newline="").writelines(out)
+print("[ok] plugins section appended (backup: config.yaml.bak-token-stats)")
 PYEOF
   "$PY" "$TMP" "$CONFIG"
   # Validate the result parses as YAML using Hermes' own ruamel.
