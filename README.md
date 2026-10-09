@@ -115,10 +115,23 @@ install.sh                             # Idempotent installer (module copy + ser
 ./install.sh
 ```
 
-The installer is idempotent: it checks markers whether the server.py hooks
-(import + register loop) are already in place and does nothing if so. The anchor
-is the `methods_connectors` import — if upstream ever restructures that import
-list, the installer fails loudly instead of patching something broken.
+All-in-one installer for the full stack — plugin package (backend routes +
+web dashboard entry), `plugins.enabled` entry, legacy gateway RPC hooks,
+known-ledger systemd daemon, dashboard restart and a smoke check. Idempotent:
+safe to re-run at any time (e.g. after a Hermes update wiped the server.py
+hooks, or after a `git pull`). No third-party dependencies — the ledger
+daemon is pure stdlib, fastapi/ruamel come with the Hermes runtime, and the
+installer only verifies their importability.
+
+Flags: `--no-daemon` (plugin backend only), `--no-restart`, `--yes` /
+`ASSUME_YES=1` (non-interactive). Env overrides: `HERMES_LIB`,
+`HERMES_HOME`, `DASHBOARD_PORT`, `LEDGER_BASE`.
+
+The server.py patch step is anchored on the `methods_connectors` import —
+if upstream ever restructures that import list, the installer fails loudly
+instead of patching something broken. The config.yaml edit inserts exactly
+one list item (no YAML round-trip — a library dump reflows the whole file);
+a backup is written next to the config first.
 
 After installing, restart the service the **desktop app actually talks to**
 (`hermes-dashboard.service`, port 9119 — NOT `hermes-gateway.service`): the
