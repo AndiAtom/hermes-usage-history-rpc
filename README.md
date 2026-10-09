@@ -64,6 +64,29 @@ Data sources: `sessions` (lifetime totals per session) + `session_model_usage`
 The RPCs (`usage.history`/`usage.totals`) remain as **legacy fallback** for
 the client (old gateways, OAuth remotes where `ctx.rest` is a no-op).
 
+## Web dashboard plugin (v0.6.0)
+
+`plugin_pkg/token-stats/dashboard/` also ships a **web-dashboard plugin**
+(`web-entry.js`, referenced by the manifest's `entry` field): a full port of
+the desktop pane's design as a tab in the Hermes **web** dashboard (the
+browser UI on port 9119 — a separate plugin SDK from the desktop app's).
+It registers via `window.__HERMES_PLUGINS__.register()` and fetches live
+data from the same ledger backend routes via the host's `fetchJSON`
+(30 s poll, calendar-window presets, day-group totals, ⚡ cache-hit bar,
+🪙/€ histogram, model/subagent/aux breakdowns, ⚠ anomaly flags).
+
+The pane logic (pricing tables, `estimateCost`, calendar windows,
+aggregations) is a verbatim port of the desktop plugin — keep both in sync
+on pricing changes. Styling is self-contained: the web build ships a fixed
+compiled Tailwind CSS, so the entry injects its own namespaced `.ts-*`
+stylesheet built on the dashboard theme variables (`--midground-base` etc.)
+and follows the active theme. No Tailwind classes are used.
+
+| Scope | Web port |
+|---|---|
+| Presets, summary, histogram, day groups, breakdowns, anomaly flags | ✔ |
+| Statusbar chip, live-usage overlay, column drag-resize | ✖ (desktop-only — no session event stream in the web SDK) |
+
 ## Layout
 
 ```
@@ -74,6 +97,7 @@ ledger/poller.py                       # state.db → rows mapping (read-only sn
 ledger/daemon.py                       # 15-s poll loop, per-profile discovery, --once mode (LEDGER_INTERVAL env)
 ledger/token-stats-ledger.service      # systemd unit
 plugin_pkg/token-stats/                # Plugin backend package (deploys to ~/.hermes/plugins/token-stats/)
+plugin_pkg/token-stats/dashboard/      # Backend routes (plugin_api.py) + web-dashboard entry (web-entry.js)
 test_ledger_engine.py                  # Delta-rule unit tests (incl. write-sparsity regressions)
 test_ledger_poller.py                  # Poller cut-off/reappear/heartbeat tests (v0.5.0)
 test_plugin_api.py                     # Backend route tests (TestClient, isolated ENV)
