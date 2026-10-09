@@ -76,8 +76,13 @@ data from the same ledger backend routes via the host's `fetchJSON`
 🪙/€ histogram, model/subagent/aux breakdowns, ⚠ anomaly flags).
 
 The pane logic (pricing tables, `estimateCost`, calendar windows,
-aggregations) is a verbatim port of the desktop plugin — keep both in sync
-on pricing changes. Styling is self-contained: the web build ships a fixed
+aggregations) is a verbatim port of the desktop plugin. **Parity rule:**
+every change or fix to the desktop pane is ported to the web entry as
+well — the two implementations stay in lockstep (pricing changes in
+particular must land in both files). The web entry carries its own
+version marker (`vX.Y.Z-web.N` in the file header), bumped on every port.
+
+Styling is self-contained: the web build ships a fixed
 compiled Tailwind CSS, so the entry injects its own namespaced `.ts-*`
 stylesheet built on the dashboard theme variables (`--midground-base` etc.)
 and follows the active theme. No Tailwind classes are used.
