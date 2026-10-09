@@ -2,7 +2,7 @@
  * Token Stats — Hermes Web-Dashboard plugin entry (companion to the
  * desktop plugin.js in AndiAtom/hermes-token-stats).
  *
- * @version v4.7.5-web.1
+ * @version v4.7.5-web.2
  *
  * Port of the desktop pane design to the web dashboard plugin SDK
  * (window.__HERMES_PLUGIN_SDK__ + window.__HERMES_PLUGINS__.register).
@@ -17,11 +17,11 @@
  *   ✔ Session list with day separators + per-day totals, collapsible
  *     day groups (today expanded, others collapsed), ⚠ anomaly flags
  *   ✔ Sortable columns (In / ⚡ / Out / 💰 / activity)
+ *   ✔ Column drag-resize (desktop parity; widths persist in localStorage)
  *   ✔ Footer breakdowns: Modelle / Subagenten / Aux-Tasks (€-columns,
  *     relative inline size bars — ported verbatim)
  *   ✖ no statusbar chip, no live-usage overlay (web has no session
- *     event stream; the ledger's known counters are the floor),
- *     no column drag-resize (desktop persistence feature).
+ *     event stream; the ledger's known counters are the floor).
  *
  * Styling: the web build ships a FIXED compiled Tailwind CSS — utilities
  * it doesn't itself use don't exist (same failure class as the desktop
@@ -44,7 +44,7 @@
   const fetchJSON = SDK.fetchJSON
   const h = React.createElement
   const ID = 'token-stats'
-  const VERSION = 'v4.7.5-web.1'
+  const VERSION = 'v4.7.5-web.2'
 
   // ── Injected stylesheet (namespaced .ts-* classes) ─────────────────
   // Built on theme vars so the active dashboard theme flows through:
@@ -100,6 +100,9 @@
 .ts-th.l{text-align:left;padding-right:.5rem}
 .ts-th.r{text-align:right;padding:0 .25rem}
 .ts-thead{position:sticky;top:0;background:var(--tsw-card);z-index:10}
+.ts-th{position:relative}
+.ts-grip{position:absolute;top:0;bottom:0;right:0;width:6px;cursor:col-resize;z-index:20}
+.ts-grip:hover{background:color-mix(in srgb, var(--tsw-accent) 50%, transparent)}
 .ts-day{font-size:.625rem;color:var(--tsw-t4);cursor:pointer;
  border-bottom:1px solid color-mix(in srgb, var(--midground-base) 8%, transparent)}
 .ts-day td{padding:.25rem .25rem;white-space:nowrap}
@@ -842,6 +845,68 @@
     cost: { dir: 'desc', val: r => r.cost != null ? r.cost : -Infinity },
   }
 
+  // ── Column widths (drag-resize, persisted) ──────────────────────────
+  // Port of the desktop colWidths atom: percentages, sum 100, both pane
+  // tables (summary + session list) read the same state so they stay
+  // column-aligned. Persisted in localStorage (web equivalent of the
+  // desktop plugin's ctx.storage).
+  const DEFAULT_COLW = [48, 14, 14, 13, 11]
+  const MIN_COLW = 5
+  const COLW_KEY = 'token-stats:colWidths'
+
+  function loadColWidths() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(COLW_KEY))
+      if (Array.isArray(saved) && saved.length === DEFAULT_COLW.length
+          && saved.every(n => Number.isFinite(n))) {
+        return saved.map(Number)
+      }
+    } catch (e) { /* corrupted entry -> defaults */ }
+    return DEFAULT_COLW.map(Number)
+  }
+
+  function saveColWidths(w) {
+    try { localStorage.setItem(COLW_KEY, JSON.stringify(w)) } catch (e) { /* private mode */ }
+  }
+
+  // Drag state lives outside React (module scope, like the desktop's
+  // plain colDrag object): native document listeners drive the drag,
+  // no hook churn, no re-render per pointermove.
+  let colDrag = null
+  let sortSuppressClick = false
+  function startColDrag(e, i, tableW, onWidths) {
+    e.preventDefault()
+    e.stopPropagation()
+    colDrag = {
+      i,
+      startX: e.clientX,
+      startW: loadColWidths().map(Number),
+      tableW: tableW || 540,
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    const move = (ev) => {
+      if (!colDrag) return
+      let delta = ((ev.clientX - colDrag.startX) / colDrag.tableW) * 100
+      // Clamp so neither side drops below MIN_COLW (sum stays 100)
+      delta = Math.max(MIN_COLW - colDrag.startW[colDrag.i],
+              Math.min(colDrag.startW[colDrag.i + 1] - MIN_COLW, delta))
+      const next = [...colDrag.startW]
+      next[colDrag.i] += delta
+      next[colDrag.i + 1] -= delta
+      onWidths(next)
+    }
+    const up = () => {
+      colDrag = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('pointermove', move)
+      document.removeEventListener('pointerup', up)
+    }
+    document.addEventListener('pointermove', move)
+    document.addEventListener('pointerup', up)
+  }
+
   // Per-day token totals over the window, for the mini histogram. A
   // session's tokens are attributed to its last-active day. Capped at 30
   // bars. Each bucket also carries the day's estimated PAYG-equivalent
@@ -944,6 +1009,9 @@
     const [auxOpen, setAuxOpen] = useState(false)
     const [histMetric, setHistMetric] = useState('tokens') // 'tokens' | 'cost'
     const [reload, setReload] = useState(0)
+    const [colWidths, setColWidths] = useState(loadColWidths)
+    const tableRef = useRef(null)
+    const setAndSaveColWidths = (w) => { setColWidths(w); saveColWidths(w) }
 
     const ledger = useLedger(range, reload)
     const ledgerOk = ledger && ledger.ok
@@ -1133,12 +1201,29 @@
       const arrow = active ? h('span', { style: { fontSize: '0.5rem' } }, sortDir === 'asc' ? '▲' : '▼') : null
       return h('th', {
         className: 'ts-th ' + cls,
+        style: { width: colWidths[i] + '%' },
         title,
-        ...(sortKey ? { onClick: () => onSortHeader(sortKey) } : {}),
-      }, h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '0.125rem' } }, children, arrow))
+        ...(sortKey ? { onClick: () => {
+          // a pointerdown on the resize grip precedes the click —
+          // swallow the sort toggle when the click was actually a drag
+          if (sortSuppressClick) { sortSuppressClick = false; return }
+          onSortHeader(sortKey)
+        } } : {}),
+      },
+        h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '0.125rem' } }, children, arrow),
+        // resize grip on the right edge of every column but the last
+        i < colWidths.length - 1
+          ? h('span', {
+              className: 'ts-grip',
+              onPointerDown: (e) => {
+                sortSuppressClick = true
+                const tw = tableRef.current
+                  ? tableRef.current.getBoundingClientRect().width : 540
+                startColDrag(e, i, tw, setAndSaveColWidths)
+              },
+            })
+          : null)
     }
-
-    const colW = [48, 14, 14, 13, 11]
 
     // ── Render ────────────────────────────────────────────────────────
     return h('div', { className: 'tsweb', title: `Token Stats ${VERSION} · Web-Port der Desktop-Pane` },
@@ -1197,17 +1282,17 @@
             h('table', { className: 'tstable' },
               h('tbody', {},
                 h('tr', { className: 'tsq' },
-                  h('td', { style: { width: colW[0] + '%' } }, 'Total'),
-                  h('td', { className: 'ts-num', style: { width: colW[1] + '%', fontWeight: 500 } }, fmt(grandInput)),
+                  h('td', { style: { width: colWidths[0] + '%' } }, 'Total'),
+                  h('td', { className: 'ts-num', style: { width: colWidths[1] + '%', fontWeight: 500 } }, fmt(grandInput)),
                   h('td', {
-                    className: 'ts-num ts-acc', style: { width: colW[2] + '%', fontWeight: 500 },
+                    className: 'ts-num ts-acc', style: { width: colWidths[2] + '%', fontWeight: 500 },
                     title: grandCached > 0 && grandInput + grandCached > 0
                       ? `${fmtFull(grandCached)} of ${fmtFull(grandInput + grandCached)} prompt tokens served from cache (${Math.round(grandCached / (grandInput + grandCached) * 100)}%)`
                       : undefined,
                   }, fmt(grandCached)),
-                  h('td', { className: 'ts-num', style: { width: colW[3] + '%', fontWeight: 500 } }, fmt(grandOutput)),
+                  h('td', { className: 'ts-num', style: { width: colWidths[3] + '%', fontWeight: 500 } }, fmt(grandOutput)),
                   h('td', {
-                    className: 'ts-num', style: { width: colW[4] + '%', fontWeight: 500 },
+                    className: 'ts-num', style: { width: colWidths[4] + '%', fontWeight: 500 },
                     title: grandCost > 0
                       ? `Known-Ledger, monoton · Estimated: ${(grandCost * EUR_RATE).toFixed(2)} € (USD ${grandCost.toFixed(2)})${unpricedRows > 0 ? ` — ${unpricedRows} unpriced session(s) excluded` : ''}`
                       : 'Known-Ledger, monoton',
@@ -1278,7 +1363,7 @@
             ? h('div', { className: 'ts-empty' },
                 h('div', { style: { fontSize: '1rem', marginBottom: '0.25rem' } }, '🌫️'),
                 EMPTY_MSG[range] || 'No sessions')
-            : h('table', { className: 'tstable' },
+            : h('table', { className: 'tstable', ref: tableRef },
                 h('thead', { className: 'ts-thead' },
                   h('tr', {},
                     Th(0, 'l', 'Session', 'Sortieren: letzte Aktivität', 'activity'),

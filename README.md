@@ -90,7 +90,8 @@ and follows the active theme. No Tailwind classes are used.
 | Scope | Web port |
 |---|---|
 | Presets, summary, histogram, day groups, breakdowns, anomaly flags | ✔ |
-| Statusbar chip, live-usage overlay, column drag-resize | ✖ (desktop-only — no session event stream in the web SDK) |
+| Statusbar chip, live-usage overlay | ✖ (desktop-only — no session event stream in the web SDK) |
+| Column drag-resize | ✔ since web.2 (persisted in localStorage, `token-stats:colWidths`) |
 
 ## Layout
 
