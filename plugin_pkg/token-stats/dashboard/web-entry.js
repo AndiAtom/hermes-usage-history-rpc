@@ -2,7 +2,7 @@
  * Token Stats — Hermes Web-Dashboard plugin entry (companion to the
  * desktop plugin.js in AndiAtom/hermes-token-stats).
  *
- * @version v4.7.5-web.2
+ * @version v4.7.5-web.3
  *
  * Port of the desktop pane design to the web dashboard plugin SDK
  * (window.__HERMES_PLUGIN_SDK__ + window.__HERMES_PLUGINS__.register).
@@ -44,7 +44,7 @@
   const fetchJSON = SDK.fetchJSON
   const h = React.createElement
   const ID = 'token-stats'
-  const VERSION = 'v4.7.5-web.2'
+  const VERSION = 'v4.7.5-web.3'
 
   // ── Injected stylesheet (namespaced .ts-* classes) ─────────────────
   // Built on theme vars so the active dashboard theme flows through:
@@ -60,7 +60,7 @@
  --tsw-stroke:color-mix(in srgb, var(--midground-base) 15%, transparent);
  --tsw-card:color-mix(in srgb, var(--midground-base) 4%, var(--background-base));
  display:flex;flex-direction:column;gap:.5rem;height:100%;
- max-width:540px;min-height:0;overflow:hidden;padding:.75rem;
+ min-height:0;overflow:hidden;padding:.75rem;
  box-sizing:border-box;font-size:.75rem;color:var(--tsw-t2)}
 .tsweb *{box-sizing:border-box}
 .ts-head{display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
