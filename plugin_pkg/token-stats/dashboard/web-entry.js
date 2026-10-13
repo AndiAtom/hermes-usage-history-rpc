@@ -2,7 +2,7 @@
  * Token Stats — Hermes Web-Dashboard plugin entry (companion to the
  * desktop plugin.js in AndiAtom/hermes-token-stats).
  *
- * @version v4.7.5-web.3
+ * @version v5.0.0-web.1
  *
  * Port of the desktop pane design to the web dashboard plugin SDK
  * (window.__HERMES_PLUGIN_SDK__ + window.__HERMES_PLUGINS__.register).
@@ -18,8 +18,13 @@
  *     day groups (today expanded, others collapsed), ⚠ anomaly flags
  *   ✔ Sortable columns (In / ⚡ / Out / 💰 / activity)
  *   ✔ Column drag-resize (desktop parity; widths persist in localStorage)
- *   ✔ Footer breakdowns: Modelle / Subagenten / Aux-Tasks (€-columns,
+ *   ✔ Footer breakdowns: Models / Subagents / Aux-Tasks (cost columns,
  *     relative inline size bars — ported verbatim)
+ *   ✔ I18N + currency (v5.0.0 parity): EN/DE/FR/NL/IT + €/$ segmented
+ *     toggles in the pane header; I18N table + helpers ported VERBATIM
+ *     from the desktop plugin.js (commit 36c84b5); localStorage keys
+ *     shared with the desktop chip (Andi-Decision 13.10.2026 — one
+ *     user, one preference across surfaces)
  *   ✖ no statusbar chip, no live-usage overlay (web has no session
  *     event stream; the ledger's known counters are the floor).
  *
@@ -44,7 +49,7 @@
   const fetchJSON = SDK.fetchJSON
   const h = React.createElement
   const ID = 'token-stats'
-  const VERSION = 'v4.7.5-web.3'
+  const VERSION = 'v5.0.0-web.1'
 
   // ── Injected stylesheet (namespaced .ts-* classes) ─────────────────
   // Built on theme vars so the active dashboard theme flows through:
@@ -73,6 +78,14 @@
 .tsbtn.on{background:var(--tsw-accent);color:var(--background-base)}
 .tsbtn.tint{background:color-mix(in srgb, var(--tsw-accent) 15%, transparent);
  color:var(--tsw-accent);font-weight:500}
+.ts-segrow{display:flex;align-items:center;justify-content:flex-end;flex-shrink:0;
+ gap:.375rem;flex-wrap:wrap}
+.ts-seg{display:flex;align-items:center;gap:.125rem}
+.ts-seg-btn{background:transparent;border:none;padding:.125rem .375rem;font-size:.625rem;
+ color:var(--tsw-t4);cursor:pointer;border-radius:.25rem;font-family:inherit;line-height:1.4}
+.ts-seg-btn:hover{background:var(--tsw-stroke);color:var(--tsw-t3)}
+.ts-seg-btn.active{background:color-mix(in srgb, var(--midground-base) 25%, transparent);
+ color:var(--midground-base);font-weight:500}
 .ts-card{border:1px solid var(--tsw-stroke);border-radius:.375rem;
  padding:.375rem .5rem;flex-shrink:0}
 .tstable{width:100%;table-layout:fixed;border-collapse:collapse}
@@ -712,6 +725,509 @@
   // $1.40 / €1.19 → 0.85). Update when the official EUR listing shifts.
   const EUR_RATE = 0.85
 
+  // ── I18N + currency (v5.0.0) ───────────────────────────────────────
+  // VERBATIM PORT from the desktop plugin.js (commit 36c84b5): same
+  // dictionaries, same keys, same fallback chain — do NOT retranslate.
+  // Language: DE/EN/FR/NL/IT, EN default (Reddit promise). Currency:
+  // EUR default, USD optional. Both persist via localStorage
+  // (write-through on every toggle) under the SAME keys the desktop
+  // chip uses (token-stats:lang / token-stats:currency) — one user,
+  // same machine, one preference across surfaces (Andi-Decision
+  // 13.10.2026). Fachbegriffe (Tokens, Cache, Input, Output, Calls,
+  // Ledger, Known-Ledger, Subagent, Aux-Tasks) stay untranslated by
+  // repo convention. t(key, n): dict values may be plain strings or
+  // (n) => … plural functions; fallback chain: active lang → en → de
+  // → key. localStorage access is try/catch guarded (private mode /
+  // unavailable storage must not crash the plugin — fall back instead).
+
+  const LANGS = ['en', 'de', 'fr', 'nl', 'it']            // EN = default
+  const LANG_LABELS = { en: 'EN', de: 'DE', fr: 'FR', nl: 'NL', it: 'IT' }
+  const LOCALES = { en: 'en-US', de: 'de-DE', fr: 'fr-FR', nl: 'nl-NL', it: 'it-IT' }
+
+  // localStorage read with validation. try/catch: private mode /
+  // unavailable storage must not crash the plugin — fall back instead.
+  function initLS(key, allowed, fallback) {
+    try {
+      const v = localStorage.getItem(key)
+      return allowed.includes(v) ? v : fallback
+    } catch (e) {
+      return fallback
+    }
+  }
+  function lsSet(key, val) {
+    try { localStorage.setItem(key, val) } catch (e) { /* private mode */ }
+  }
+
+  const I18N = {
+    en: {
+      show_tokens: '🪙 Tokens',
+      show_cache: '⚡ Cache',
+      show_context: '📊 Context',
+      show_cost: '💰 Cost',
+      show_calls: '🔁 API-Calls',
+      menu_display: 'Display',
+      menu_language: 'Language',
+      menu_currency: 'Currency',
+      range_tip_day: 'Today (from 0:00)',
+      range_tip_workweek: 'Current workweek: Mon 0:00 – Fri 23:59:59',
+      range_tip_week: 'Current calendar week: Mon 0:00 – Sun 23:59:59',
+      range_tip_month: 'Current month (from the 1st, 0:00)',
+      range_tip_all: 'Everything',
+      today: 'Today',
+      yesterday: 'Yesterday',
+      windowAll: 'All time',
+      windowFrom: (d) => 'from ' + d,
+      empty_day: 'No sessions yet today',
+      empty_workweek: 'No sessions in the workweek (Mon–Fri)',
+      empty_week: 'No sessions in this calendar week',
+      empty_month: 'No sessions this month',
+      empty_all: 'No sessions in the ledger yet',
+      knownLedger: 'Known-Ledger, monotonic',
+      summaryTotal: 'Total',
+      cacheHitLabel: '⚡ Cache-Hit',
+      cacheHitTip: 'Share of prompt tokens served from the prompt cache (instead of recomputed)',
+      cacheHitNumbers: (c, t) => `${c} of ${t} prompt tokens from cache`,
+      histTokensPerDay: 'Tokens per day',
+      histCostPerDay: (sym) => sym + ' per day',
+      histTipTokens: 'Bar height = tokens per day',
+      histTipCost: 'Bar height = estimated cost (PAYG equivalent) per day',
+      histAxisTip: 'Daily bars: height relative to the strongest day in the window',
+      histBarTip: (day, tokens, cost, sessions) => `${day} · ${tokens} Tokens · ≈ ${cost} · ${sessions}`,
+      tokensWord: 'Tokens',
+      grandTotalWord: 'Total:',
+      sessions: (n) => n === 1 ? 'session' : 'sessions',
+      oneSession: '1 session',
+      sortActivity: 'Sort by: last activity',
+      sortIn: 'Sort by: input tokens',
+      sortOut: 'Sort by: output tokens',
+      sortCached: 'Sort by: cache reads · Cached input tokens',
+      sortCost: 'Sort by: estimated cost · Estimated cost (client-side pricing table)',
+      outRelTip: (m) => `Output relative to the largest session (${m})`,
+      expand: 'Expand',
+      collapse: 'Collapse',
+      expandAllDays: 'Expand all day groups',
+      collapseAllDays: 'Collapse all day groups (totals rows stay visible)',
+      dayInTotal: 'Input total:',
+      dayCachedTotal: 'Cache reads total:',
+      dayOutTotal: 'Output total:',
+      estimated: 'Estimated',
+      // Today's session-row tooltip header is 'Estimated:' in the DE UI too
+      // (mixed EN/DE was the shipped text) — keep it byte-identical for de.
+      estimatedRow: 'Estimated',
+      estimatedCost: 'Estimated cost',
+      unpricedExcluded: (n) => n === 1 ? 'unpriced session excluded' : 'unpriced sessions excluded',
+      auxUnpricedNote: '(≈ — unpriced rows excluded)',
+      noCostDay: 'No cost for this day',
+      grandTotalTip: (cost) => `Known-Ledger, monotonic · Estimated: ${cost}`,
+      noPrice: 'no price',
+      totalTokens: 'Total tokens',
+      auxBgReview: 'Background review',
+      auxCompression: 'Compression',
+      auxVision: 'Vision',
+      auxTitle: 'Title generation',
+      auxApproval: 'Approval',
+      models: (n) => n === 1 ? 'model' : 'models',
+      subagents: (n) => n === 1 ? 'subagent' : 'subagents',
+      auxTasks: (n) => n === 1 ? 'Aux-Task' : 'Aux-Tasks',
+      modelsHeader: 'Models',
+      subagentsHeader: 'Subagents',
+      auxHeader: 'Aux-Tasks',
+      modelsTipOpen: 'Expand model list (over the active window)',
+      modelsTipClose: 'Collapse model list',
+      subTipOpen: 'Expand subagent list (delegated tasks in the active window)',
+      subTipClose: 'Collapse subagent list',
+      auxTipOpen: 'Expand aux-task list (auxiliary calls: background review, compression, vision, title, approval — in the active window)',
+      auxTipClose: 'Collapse aux-task list',
+      modelsColon: 'Models: ',
+      dbReset: '⚠ DB reset detected — values from the known ledger (monotonic)',
+      dbResetFlag: 'DB reset/anomaly recorded in the ledger — known values stay monotonic',
+      errBackendDown: 'Ledger backend unreachable: ',
+      errRetry: 'Retry',
+      errCheckHint: 'Check: systemctl status token-stats-ledger · the dashboard process must have the plugin backend mounted (restart after deploy).',
+    },
+    de: {
+      show_tokens: '🪙 Tokens',
+      show_cache: '⚡ Cache',
+      show_context: '📊 Context',
+      show_cost: '💰 Cost',
+      show_calls: '🔁 API-Calls',
+      menu_display: 'Display',
+      menu_language: 'Language',
+      menu_currency: 'Currency',
+      range_tip_day: 'Heute (ab 0:00 Uhr)',
+      range_tip_workweek: 'Laufende Arbeitswoche: Mo 0:00 – Fr 23:59:59',
+      range_tip_week: 'Laufende Kalenderwoche: Mo 0:00 – So 23:59:59',
+      range_tip_month: 'Laufender Monat (ab dem 1., 0:00 Uhr)',
+      range_tip_all: 'Alles',
+      today: 'Heute',
+      yesterday: 'Gestern',
+      windowAll: 'Alle Zeit',
+      windowFrom: (d) => 'ab ' + d,
+      empty_day: 'Noch keine Sitzungen heute',
+      empty_workweek: 'Keine Sitzungen in der Arbeitswoche (Mo–Fr)',
+      empty_week: 'Keine Sitzungen in dieser Kalenderwoche',
+      empty_month: 'Keine Sitzungen im laufenden Monat',
+      empty_all: 'Noch keine Sitzungen im Ledger',
+      knownLedger: 'Known-Ledger, monoton',
+      summaryTotal: 'Total',
+      cacheHitLabel: '⚡ Cache-Hit',
+      cacheHitTip: 'Anteil der Prompt-Tokens, die aus dem Prompt-Cache kamen (statt neu berechnet)',
+      cacheHitNumbers: (c, t) => `${c} von ${t} Prompt-Tokens aus dem Cache`,
+      histTokensPerDay: 'Tokens pro Tag',
+      histCostPerDay: (sym) => sym + ' pro Tag',
+      histTipTokens: 'Balkenhöhe = Tokens pro Tag',
+      histTipCost: 'Balkenhöhe = geschätzte Kosten (PAYG-Äquivalent) pro Tag',
+      histAxisTip: 'Tages-Balken: Höhe relativ zum stärksten Tag im Fenster',
+      histBarTip: (day, tokens, cost, sessions) => `${day} · ${tokens} Tokens · ≈ ${cost} · ${sessions}`,
+      tokensWord: 'Tokens',
+      grandTotalWord: 'Gesamt:',
+      sessions: (n) => n === 1 ? 'Sitzung' : 'Sitzungen',
+      oneSession: '1 Sitzung',
+      sortActivity: 'Sortieren: letzte Aktivität',
+      sortIn: 'Sortieren: Input-Tokens',
+      sortOut: 'Sortieren: Output-Tokens',
+      sortCached: 'Sortieren: Cache-Reads · Cached input tokens',
+      sortCost: 'Sortieren: geschätzte Kosten · Estimated cost (client-side pricing table)',
+      outRelTip: (m) => `Output relativ zur größten Session (${m})`,
+      expand: 'Aufklappen',
+      collapse: 'Zuklappen',
+      expandAllDays: 'Alle Tagesgruppen aufklappen',
+      collapseAllDays: 'Alle Tagesgruppen zuklappen (Summenzeilen bleiben sichtbar)',
+      dayInTotal: 'Input gesamt:',
+      dayCachedTotal: 'Cache-Reads gesamt:',
+      dayOutTotal: 'Output gesamt:',
+      estimated: 'Geschätzt',
+      // Today's session-row tooltip header is 'Estimated:' in the DE UI too
+      // (mixed EN/DE was the shipped text) — keep it byte-identical for de.
+      estimatedRow: 'Estimated',
+      estimatedCost: 'Geschätzte Kosten',
+      unpricedExcluded: (n) => n === 1 ? 'unbepreiste Sitzung ausgeschlossen' : 'unbepreiste Sitzungen ausgeschlossen',
+      // Today's DE aux tooltip carries this mixed EN/DE fragment — keep
+      // byte-identical.
+      auxUnpricedNote: '(≈ — unpriced Rows ausgeschlossen)',
+      noCostDay: 'Keine Kosten für diesen Tag',
+      // Today's DE summary tooltip is mixed ('Estimated:' stays English) —
+      // byte-identical rule, do not germanize.
+      grandTotalTip: (cost) => `Known-Ledger, monoton · Estimated: ${cost}`,
+      noPrice: 'kein Preis',
+      totalTokens: 'Gesamttokens',
+      auxBgReview: 'Hintergrund-Review',
+      auxCompression: 'Kompression',
+      auxVision: 'Vision',
+      auxTitle: 'Titel-Generierung',
+      auxApproval: 'Approval',
+      models: (n) => n === 1 ? 'Modell' : 'Modelle',
+      subagents: (n) => n === 1 ? 'Subagent' : 'Subagenten',
+      auxTasks: (n) => n === 1 ? 'Aux-Task' : 'Aux-Tasks',
+      modelsHeader: 'Modelle',
+      subagentsHeader: 'Subagenten',
+      auxHeader: 'Aux-Tasks',
+      modelsTipOpen: 'Modell-Liste aufklappen (auf- und absteigend über das aktive Fenster)',
+      modelsTipClose: 'Modell-Liste zuklappen',
+      subTipOpen: 'Subagenten-Liste aufklappen (delegierte Tasks im aktiven Fenster)',
+      subTipClose: 'Subagenten-Liste zuklappen',
+      auxTipOpen: 'Aux-Task-Liste aufklappen (Auxiliary-Calls: Hintergrund-Review, Kompression, Vision, Titel, Approval — im aktiven Fenster)',
+      auxTipClose: 'Aux-Task-Liste zuklappen',
+      modelsColon: 'Modelle: ',
+      dbReset: '⚠ DB-Reset erkannt — Werte aus dem Known-Ledger (monoton)',
+      dbResetFlag: 'DB-Reset/Anomalie im Ledger verzeichnet — known-Werte bleiben monoton',
+      errBackendDown: 'Ledger-Backend nicht erreichbar: ',
+      errRetry: 'Erneut versuchen',
+      errCheckHint: 'Prüfen: systemctl status token-stats-ledger · Dashboard-Prozess muss das Plugin-Backend gemountet haben (Restart nach Deploy).',
+    },
+    fr: {
+      show_tokens: '🪙 Tokens',
+      show_cache: '⚡ Cache',
+      show_context: '📊 Contexte',
+      show_cost: '💰 Coût',
+      show_calls: '🔁 Appels API',
+      menu_display: 'Display',
+      menu_language: 'Language',
+      menu_currency: 'Currency',
+      range_tip_day: 'Aujourd\u2019hui (à partir de 0:00)',
+      range_tip_workweek: 'Semaine de travail en cours : lun. 0:00 – ven. 23:59:59',
+      range_tip_week: 'Semaine calendaire en cours : lun. 0:00 – dim. 23:59:59',
+      range_tip_month: 'Mois en cours (à partir du 1er, 0:00)',
+      range_tip_all: 'Tout',
+      today: 'Aujourd\u2019hui',
+      yesterday: 'Hier',
+      windowAll: 'Tout l\u2019historique',
+      windowFrom: (d) => 'depuis ' + d,
+      empty_day: 'Pas encore de sessions aujourd\u2019hui',
+      empty_workweek: 'Aucune session dans la semaine de travail (lun.–ven.)',
+      empty_week: 'Aucune session dans cette semaine calendaire',
+      empty_month: 'Aucune session ce mois-ci',
+      empty_all: 'Pas encore de sessions dans le ledger',
+      knownLedger: 'Known-Ledger, monotone',
+      summaryTotal: 'Total',
+      cacheHitLabel: '⚡ Cache-Hit',
+      cacheHitTip: 'Part des prompt tokens issus du prompt cache (au lieu d\u2019être recalculés)',
+      cacheHitNumbers: (c, t) => `${c} prompt tokens sur ${t} issus du cache`,
+      histTokensPerDay: 'Tokens par jour',
+      histCostPerDay: (sym) => sym + ' par jour',
+      histTipTokens: 'Hauteur des barres = tokens par jour',
+      histTipCost: 'Hauteur des barres = coût estimé (équivalent PAYG) par jour',
+      histAxisTip: 'Barres quotidiennes : hauteur relative au jour le plus actif de la fenêtre',
+      histBarTip: (day, tokens, cost, sessions) => `${day} · ${tokens} Tokens · ≈ ${cost} · ${sessions}`,
+      tokensWord: 'Tokens',
+      grandTotalWord: 'Total :',
+      sessions: (n) => n === 1 ? 'session' : 'sessions',
+      oneSession: '1 session',
+      sortActivity: 'Trier : dernière activité',
+      sortIn: 'Trier : input tokens',
+      sortOut: 'Trier : output tokens',
+      sortCached: 'Trier : cache reads · Cached input tokens',
+      sortCost: 'Trier : coût estimé · Estimated cost (client-side pricing table)',
+      outRelTip: (m) => `Output relatif à la plus grande session (${m})`,
+      expand: 'Déplier',
+      collapse: 'Replier',
+      expandAllDays: 'Déplier tous les groupes de jours',
+      collapseAllDays: 'Replier tous les groupes de jours (les lignes de totaux restent visibles)',
+      dayInTotal: 'Input total :',
+      dayCachedTotal: 'Cache reads total :',
+      dayOutTotal: 'Output total :',
+      estimated: 'Estimé',
+      estimatedRow: 'Estimated',
+      estimatedCost: 'Coût estimé',
+      unpricedExcluded: (n) => n === 1 ? 'session non tarifée exclue' : 'sessions non tarifées exclues',
+      auxUnpricedNote: '(≈ — lignes non tarifées exclues)',
+      noCostDay: 'Aucun coût pour ce jour',
+      grandTotalTip: (cost) => `Known-Ledger, monotone · Estimé : ${cost}`,
+      noPrice: 'pas de prix',
+      totalTokens: 'Total tokens',
+      auxBgReview: 'Revue en arrière-plan',
+      auxCompression: 'Compression',
+      auxVision: 'Vision',
+      auxTitle: 'Génération de titre',
+      auxApproval: 'Approval',
+      models: (n) => n === 1 ? 'modèle' : 'modèles',
+      subagents: (n) => n === 1 ? 'subagent' : 'subagents',
+      auxTasks: (n) => n === 1 ? 'Aux-Task' : 'Aux-Tasks',
+      modelsHeader: 'Modèles',
+      subagentsHeader: 'Subagents',
+      auxHeader: 'Aux-Tasks',
+      modelsTipOpen: 'Déplier la liste des modèles (sur la fenêtre active)',
+      modelsTipClose: 'Replier la liste des modèles',
+      subTipOpen: 'Déplier la liste des subagents (tâches déléguées dans la fenêtre active)',
+      subTipClose: 'Replier la liste des subagents',
+      auxTipOpen: 'Déplier la liste des Aux-Tasks (appels auxiliaires : revue en arrière-plan, compression, vision, titre, approval — dans la fenêtre active)',
+      auxTipClose: 'Replier la liste des Aux-Tasks',
+      modelsColon: 'Modèles : ',
+      dbReset: '⚠ Réinitialisation DB détectée — valeurs issues du Known-Ledger (monotone)',
+      dbResetFlag: 'Réinitialisation/anomalie DB enregistrée dans le ledger — les valeurs known restent monotones',
+      errBackendDown: 'Backend du ledger inaccessible : ',
+      errRetry: 'Réessayer',
+      errCheckHint: 'Vérifier : systemctl status token-stats-ledger · le processus du dashboard doit avoir monté le plugin backend (redémarrage après déploiement).',
+    },
+    nl: {
+      show_tokens: '🪙 Tokens',
+      show_cache: '⚡ Cache',
+      show_context: '📊 Context',
+      show_cost: '💰 Kosten',
+      show_calls: '🔁 API-calls',
+      menu_display: 'Display',
+      menu_language: 'Language',
+      menu_currency: 'Currency',
+      range_tip_day: 'Vandaag (vanaf 0:00)',
+      range_tip_workweek: 'Lopende werkweek: ma 0:00 – vr 23:59:59',
+      range_tip_week: 'Lopende kalenderweek: ma 0:00 – zo 23:59:59',
+      range_tip_month: 'Lopende maand (vanaf de 1e, 0:00)',
+      range_tip_all: 'Alles',
+      today: 'Vandaag',
+      yesterday: 'Gisteren',
+      windowAll: 'Alle tijd',
+      windowFrom: (d) => 'vanaf ' + d,
+      empty_day: 'Nog geen sessies vandaag',
+      empty_workweek: 'Geen sessies in de werkweek (ma–vr)',
+      empty_week: 'Geen sessies in deze kalenderweek',
+      empty_month: 'Geen sessies deze maand',
+      empty_all: 'Nog geen sessies in het ledger',
+      knownLedger: 'Known-Ledger, monotonic',
+      summaryTotal: 'Totaal',
+      cacheHitLabel: '⚡ Cache-Hit',
+      cacheHitTip: 'Aandeel prompt tokens dat uit de prompt cache kwam (in plaats van herberekend)',
+      cacheHitNumbers: (c, t) => `${c} van ${t} prompt tokens uit de cache`,
+      histTokensPerDay: 'Tokens per dag',
+      histCostPerDay: (sym) => sym + ' per dag',
+      histTipTokens: 'Balkhoogte = tokens per dag',
+      histTipCost: 'Balkhoogte = geschatte kosten (PAYG-equivalent) per dag',
+      histAxisTip: 'Dagelijkse balken: hoogte relatief aan de sterkste dag in het venster',
+      histBarTip: (day, tokens, cost, sessions) => `${day} · ${tokens} Tokens · ≈ ${cost} · ${sessions}`,
+      tokensWord: 'Tokens',
+      grandTotalWord: 'Totaal:',
+      sessions: (n) => n === 1 ? 'sessie' : 'sessies',
+      oneSession: '1 sessie',
+      sortActivity: 'Sorteren: laatste activiteit',
+      sortIn: 'Sorteren: input tokens',
+      sortOut: 'Sorteren: output tokens',
+      sortCached: 'Sorteren: cache reads · Cached input tokens',
+      sortCost: 'Sorteren: geschatte kosten · Estimated cost (client-side pricing table)',
+      outRelTip: (m) => `Output relatief aan de grootste sessie (${m})`,
+      expand: 'Uitklappen',
+      collapse: 'Inklappen',
+      expandAllDays: 'Alle daggroepen uitklappen',
+      collapseAllDays: 'Alle daggroepen inklappen (totalenrijen blijven zichtbaar)',
+      dayInTotal: 'Input totaal:',
+      dayCachedTotal: 'Cache reads totaal:',
+      dayOutTotal: 'Output totaal:',
+      estimated: 'Geschat',
+      estimatedRow: 'Estimated',
+      estimatedCost: 'Geschatte kosten',
+      unpricedExcluded: (n) => n === 1 ? 'unpriced sessie uitgesloten' : 'unpriced sessies uitgesloten',
+      auxUnpricedNote: '(≈ — unpriced rijen uitgesloten)',
+      noCostDay: 'Geen kosten voor deze dag',
+      grandTotalTip: (cost) => `Known-Ledger, monotonic · Geschat: ${cost}`,
+      noPrice: 'geen prijs',
+      totalTokens: 'Totaal tokens',
+      auxBgReview: 'Achtergrondreview',
+      auxCompression: 'Compressie',
+      auxVision: 'Vision',
+      auxTitle: 'Titelgeneratie',
+      auxApproval: 'Approval',
+      models: (n) => n === 1 ? 'model' : 'modellen',
+      subagents: (n) => n === 1 ? 'subagent' : 'subagents',
+      auxTasks: (n) => n === 1 ? 'Aux-Task' : 'Aux-Tasks',
+      modelsHeader: 'Modellen',
+      subagentsHeader: 'Subagents',
+      auxHeader: 'Aux-Tasks',
+      modelsTipOpen: 'Modellenlijst uitklappen (over het actieve venster)',
+      modelsTipClose: 'Modellenlijst inklappen',
+      subTipOpen: 'Subagentslijst uitklappen (gedelegeerde taken in het actieve venster)',
+      subTipClose: 'Subagentslijst inklappen',
+      auxTipOpen: 'Aux-Task-lijst uitklappen (auxiliary calls: achtergrondreview, compressie, vision, titel, approval — in het actieve venster)',
+      auxTipClose: 'Aux-Task-lijst inklappen',
+      modelsColon: 'Modellen: ',
+      dbReset: '⚠ DB-reset gedetecteerd — waarden uit de Known-Ledger (monotonic)',
+      dbResetFlag: 'DB-reset/anomalie geregistreerd in het ledger — known-waarden blijven monotoon',
+      errBackendDown: 'Ledger-backend niet bereikbaar: ',
+      errRetry: 'Opnieuw proberen',
+      errCheckHint: 'Controleer: systemctl status token-stats-ledger · het dashboard-proces moet de plugin-backend gemount hebben (herstart na deploy).',
+    },
+    it: {
+      show_tokens: '🪙 Tokens',
+      show_cache: '⚡ Cache',
+      show_context: '📊 Contesto',
+      show_cost: '💰 Costo',
+      show_calls: '🔁 Chiamate API',
+      menu_display: 'Display',
+      menu_language: 'Language',
+      menu_currency: 'Currency',
+      range_tip_day: 'Oggi (dalle 0:00)',
+      range_tip_workweek: 'Settimana lavorativa corrente: lun 0:00 – ven 23:59:59',
+      range_tip_week: 'Settimana di calendario corrente: lun 0:00 – dom 23:59:59',
+      range_tip_month: 'Mese corrente (dal giorno 1, 0:00)',
+      range_tip_all: 'Tutto',
+      today: 'Oggi',
+      yesterday: 'Ieri',
+      windowAll: 'Tutto il periodo',
+      windowFrom: (d) => 'dal ' + d,
+      empty_day: 'Ancora nessuna sessione oggi',
+      empty_workweek: 'Nessuna sessione nella settimana lavorativa (lun–ven)',
+      empty_week: 'Nessuna sessione in questa settimana di calendario',
+      empty_month: 'Nessuna sessione in questo mese',
+      empty_all: 'Ancora nessuna sessione nel ledger',
+      knownLedger: 'Known-Ledger, monotono',
+      summaryTotal: 'Totale',
+      cacheHitLabel: '⚡ Cache-Hit',
+      cacheHitTip: 'Quota di prompt tokens servita dalla prompt cache (invece di ricalcolata)',
+      cacheHitNumbers: (c, t) => `${c} di ${t} prompt tokens dalla cache`,
+      histTokensPerDay: 'Tokens al giorno',
+      histCostPerDay: (sym) => sym + ' al giorno',
+      histTipTokens: 'Altezza barre = tokens al giorno',
+      histTipCost: 'Altezza barre = costo stimato (equivalente PAYG) al giorno',
+      histAxisTip: 'Barre giornaliere: altezza relativa al giorno più intenso della finestra',
+      histBarTip: (day, tokens, cost, sessions) => `${day} · ${tokens} Tokens · ≈ ${cost} · ${sessions}`,
+      tokensWord: 'Tokens',
+      grandTotalWord: 'Totale:',
+      sessions: (n) => n === 1 ? 'sessione' : 'sessioni',
+      oneSession: '1 sessione',
+      sortActivity: 'Ordina: ultima attività',
+      sortIn: 'Ordina: input tokens',
+      sortOut: 'Ordina: output tokens',
+      sortCached: 'Ordina: cache reads · Cached input tokens',
+      sortCost: 'Ordina: costo stimato · Estimated cost (client-side pricing table)',
+      outRelTip: (m) => `Output relativo alla sessione più grande (${m})`,
+      expand: 'Espandi',
+      collapse: 'Comprimi',
+      expandAllDays: 'Espandi tutti i gruppi di giorni',
+      collapseAllDays: 'Comprimi tutti i gruppi di giorni (le righe dei totali restano visibili)',
+      dayInTotal: 'Input totale:',
+      dayCachedTotal: 'Cache reads totale:',
+      dayOutTotal: 'Output totale:',
+      estimated: 'Stimato',
+      estimatedRow: 'Estimated',
+      estimatedCost: 'Costo stimato',
+      unpricedExcluded: (n) => n === 1 ? 'sessione non prezzata esclusa' : 'sessioni non prezzate escluse',
+      auxUnpricedNote: '(≈ — righe non prezzate escluse)',
+      noCostDay: 'Nessun costo per questo giorno',
+      grandTotalTip: (cost) => `Known-Ledger, monotono · Stimato: ${cost}`,
+      noPrice: 'nessun prezzo',
+      totalTokens: 'Tokens totali',
+      auxBgReview: 'Revisione in background',
+      auxCompression: 'Compressione',
+      auxVision: 'Vision',
+      auxTitle: 'Generazione titolo',
+      auxApproval: 'Approval',
+      models: (n) => n === 1 ? 'modello' : 'modelli',
+      subagents: (n) => n === 1 ? 'subagent' : 'subagents',
+      auxTasks: (n) => n === 1 ? 'Aux-Task' : 'Aux-Tasks',
+      modelsHeader: 'Modelli',
+      subagentsHeader: 'Subagents',
+      auxHeader: 'Aux-Tasks',
+      modelsTipOpen: 'Espandi lista modelli (sulla finestra attiva)',
+      modelsTipClose: 'Comprimi lista modelli',
+      subTipOpen: 'Espandi lista subagent (attività delegate nella finestra attiva)',
+      subTipClose: 'Comprimi lista subagent',
+      auxTipOpen: 'Espandi lista Aux-Tasks (chiamate ausiliarie: revisione in background, compressione, vision, titolo, approval — nella finestra attiva)',
+      auxTipClose: 'Comprimi lista Aux-Tasks',
+      modelsColon: 'Modelli: ',
+      dbReset: '⚠ Reset DB rilevato — valori dal Known-Ledger (monotono)',
+      dbResetFlag: 'Reset/anomalia DB registrata nel ledger — i valori known restano monotoni',
+      errBackendDown: 'Backend del ledger non raggiungibile: ',
+      errRetry: 'Riprova',
+      errCheckHint: 'Verifica: systemctl status token-stats-ledger · il processo dashboard deve aver montato il plugin backend (riavvio dopo il deploy).',
+    },
+  }
+
+  // Module-level mutable holders (web adaptation of the desktop's
+  // LANG/CURRENCY atoms — the web SDK exposes useState only): the
+  // TokenStatsWeb component writes its current lang/currency React
+  // state into them at the top of every render, so tRaw()/fmtCost()
+  // and the other plain helper functions read the values that belong
+  // to the render in flight. Same pattern philosophy as LANG.get().
+  let _lang = 'en'
+  let _currency = 'EUR'
+
+  function localeFor(lang) { return LOCALES[lang] || 'en-US' }
+
+  function tRaw(key) {
+    const d = I18N[_lang] || {}
+    return d[key] ?? I18N.en[key] ?? I18N.de[key] ?? key
+  }
+
+  // t(key, ...args): value functions receive args (plural n, composed
+  // fragments); plain strings are returned as-is.
+  function t(key, ...args) {
+    const v = tRaw(key)
+    return typeof v === 'function' ? v(...args) : v
+  }
+
+  // fmtCost(usd, opts) — the ONLY cost-rendering path. EUR (default):
+  // usd*EUR_RATE via Intl (active locale); USD: '$' + same format.
+  // opts.full appends ' (USD X.XX)' — ONLY when currency is EUR.
+  // opts.numOnly returns the bare number (desktop chip splits number
+  // and the faint ' €' suffix span; kept for desktop parity).
+  function fmtCost(usd, opts = {}) {
+    const nf = new Intl.NumberFormat(localeFor(_lang), { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    if (_currency === 'USD') return '$' + nf.format(usd)
+    const num = nf.format(usd * EUR_RATE)
+    if (opts.numOnly) return num
+    let s = num + ' €'
+    if (opts.full) s += ` (USD ${usd.toFixed(2)})`
+    return s
+  }
+
+
   // Estimate session cost from usage fields. Returns null when the model is
   // unpriced (never fabricate a number) or usage is missing.
   // Provider-aware lookup — exact billing_provider match first
@@ -747,13 +1263,13 @@
 
   function fmtFull(n) {
     if (n == null || isNaN(n)) return '—'
-    return n.toLocaleString('de-DE')
+    return n.toLocaleString(localeFor(_lang))
   }
 
   function fmtDate(ts) {
     if (!ts) return ''
     const d = new Date(ts * 1000)
-    return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
+    return d.toLocaleDateString(localeFor(_lang), { day: '2-digit', month: '2-digit' })
   }
 
   // History range presets — CALENDAR windows, not rolling:
@@ -762,12 +1278,13 @@
   //   week     = Mon 0:00 → open (full Mon–Sun calendar week)
   //   month    = 1st of month 0:00 → open
   //   all      = everything
+  // tip = I18N key (render site resolves via t(p.tip)).
   const RANGE_PRESETS = [
-    { key: 'day', label: '1d', tip: 'Heute (ab 0:00 Uhr)' },
-    { key: 'workweek', label: '5d', tip: 'Laufende Arbeitswoche: Mo 0:00 – Fr 23:59:59' },
-    { key: 'week', label: '7d', tip: 'Laufende Kalenderwoche: Mo 0:00 – So 23:59:59' },
-    { key: 'month', label: '30d', tip: 'Laufender Monat (ab dem 1., 0:00 Uhr)' },
-    { key: 'all', label: '∞', tip: 'Alles' },
+    { key: 'day', label: '1d', tip: 'range_tip_day' },
+    { key: 'workweek', label: '5d', tip: 'range_tip_workweek' },
+    { key: 'week', label: '7d', tip: 'range_tip_week' },
+    { key: 'month', label: '30d', tip: 'range_tip_month' },
+    { key: 'all', label: '∞', tip: 'range_tip_all' },
   ]
 
   // Compute the calendar window for a preset in LOCAL time.
@@ -803,39 +1320,33 @@
 
   function dayLabel(key) {
     const now = new Date()
-    if (key === dayKeyDate(now)) return 'Heute'
-    if (key === dayKeyDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) return 'Gestern'
+    if (key === dayKeyDate(now)) return t('today')
+    if (key === dayKeyDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) return t('yesterday')
     const [y, m, d] = key.split('-').map(Number)
-    return new Date(y, m - 1, d).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })
+    return new Date(y, m - 1, d).toLocaleDateString(localeFor(_lang), { weekday: 'short', day: '2-digit', month: '2-digit' })
   }
 
   function windowLabel(range) {
     const win = windowFor(range)
-    if (!win.since) return 'Alle Zeit'
+    if (!win.since) return t('windowAll')
     const since = new Date(win.since * 1000)
-    const f = d => d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })
-    if (range === 'day') return 'Heute'
+    const loc = localeFor(_lang)
+    const f = d => d.toLocaleDateString(loc, { weekday: 'short', day: '2-digit', month: '2-digit' })
+    if (range === 'day') return t('today')
     if (range === 'workweek') return f(since) + ' – ' + f(new Date((win.until - 1) * 1000))
-    if (range === 'week') return 'ab ' + f(since)
-    return 'ab ' + since.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
+    if (range === 'week') return t('windowFrom', f(since))
+    return t('windowFrom', since.toLocaleDateString(loc, { day: '2-digit', month: '2-digit' }))
   }
 
-  const EMPTY_MSG = {
-    day: 'Noch keine Sitzungen heute',
-    workweek: 'Keine Sitzungen in der Arbeitswoche (Mo–Fr)',
-    week: 'Keine Sitzungen in dieser Kalenderwoche',
-    month: 'Keine Sitzungen im laufenden Monat',
-    all: 'Noch keine Sitzungen im Ledger',
+  // Aux task name → I18N key; unknown tasks fall back to the raw code.
+  const AUX_KEYS = {
+    background_review: 'auxBgReview',
+    compression: 'auxCompression',
+    vision: 'auxVision',
+    title_generation: 'auxTitle',
+    approval: 'auxApproval',
   }
-
-  const AUX_LABELS = {
-    background_review: 'Hintergrund-Review',
-    compression: 'Kompression',
-    vision: 'Vision',
-    title_generation: 'Titel-Generierung',
-    approval: 'Approval',
-  }
-  const auxLabel = (t) => AUX_LABELS[t] || t
+  const auxLabel = (task) => (task in AUX_KEYS ? t(AUX_KEYS[task]) : task)
 
   const SORTS = {
     activity: { dir: 'desc', val: r => (r.lastActive == null ? -Infinity : r.lastActive) },
@@ -1010,6 +1521,19 @@
     const [histMetric, setHistMetric] = useState('tokens') // 'tokens' | 'cost'
     const [reload, setReload] = useState(0)
     const [colWidths, setColWidths] = useState(loadColWidths)
+    // I18N + currency (v5.0.0): persisted under the SAME localStorage
+    // keys the desktop chip uses (token-stats:lang / token-stats:currency)
+    // — one user, one preference across surfaces. Hooks unconditional
+    // (repo rule). Write-through on every toggle.
+    const [lang, setLangState] = useState(initLS('token-stats:lang', LANGS, 'en'))
+    const [currency, setCurrencyState] = useState(initLS('token-stats:currency', ['EUR', 'USD'], 'EUR'))
+    const setLang = (l) => { setLangState(l); lsSet('token-stats:lang', l) }
+    const setCurrency = (c) => { setCurrencyState(c); lsSet('token-stats:currency', c) }
+    // Publish the current React state to the module-level holders BEFORE
+    // any helper call below — t()/fmtCost()/fmtFull()/dayLabel() read
+    // these (web equivalent of the desktop atoms' LANG.get()).
+    _lang = lang
+    _currency = currency
     const tableRef = useRef(null)
     const setAndSaveColWidths = (w) => { setColWidths(w); saveColWidths(w) }
 
@@ -1242,8 +1766,8 @@
                 type: 'button',
                 className: 'tsbtn',
                 title: allDaysCollapsed
-                  ? 'Alle Tagesgruppen aufklappen'
-                  : 'Alle Tagesgruppen zuklappen (Summenzeilen bleiben sichtbar)',
+                  ? t('expandAllDays')
+                  : t('collapseAllDays'),
                 onClick: () => {
                   const next = {}
                   // allDaysCollapsed → explicitly EXPAND every day
@@ -1257,23 +1781,45 @@
           ...RANGE_PRESETS.map(p => h('button', {
               type: 'button',
               className: 'tsbtn' + (p.key === range ? ' on' : ''),
-              title: p.tip,
+              title: t(p.tip),
               onClick: () => setRange(p.key),
             }, p.label)),
         ),
       ),
 
+      // Language + currency segmented controls (v5.0.0) — one subtle row
+      // below the presets, right-aligned, data-first styling. Persisted
+      // write-through; same keys as the desktop chip.
+      h('div', { className: 'ts-segrow' },
+        h('div', { className: 'ts-seg', title: t('menu_language') },
+          ...LANGS.map(l => h('button', {
+            type: 'button',
+            className: 'ts-seg-btn' + (lang === l ? ' active' : ''),
+            onClick: () => setLang(l),
+          }, LANG_LABELS[l]))),
+        h('div', { className: 'ts-seg', title: t('menu_currency') },
+          h('button', {
+            type: 'button',
+            className: 'ts-seg-btn' + (currency === 'EUR' ? ' active' : ''),
+            onClick: () => setCurrency('EUR'),
+          }, '€'),
+          h('button', {
+            type: 'button',
+            className: 'ts-seg-btn' + (currency === 'USD' ? ' active' : ''),
+            onClick: () => setCurrency('USD'),
+          }, '$'))),
+
       // Backend error card (fetch failed entirely — show a retry).
       ledger && !ledgerOk
         ? h('div', { className: 'ts-err' },
-            'Ledger-Backend nicht erreichbar: ' + (ledger.error || 'unbekannter Fehler'),
+            t('errBackendDown') + (ledger.error || '—'),
             h('div', { className: 'retry' },
               h('button', {
                 type: 'button', className: 'tsbtn tint',
                 onClick: () => setReload(reload + 1),
-              }, 'Erneut versuchen')),
+              }, t('errRetry'))),
             h('div', { style: { marginTop: '0.5rem', fontSize: '0.625rem' } },
-              'Prüfen: systemctl status token-stats-ledger · Dashboard-Prozess muss das Plugin-Backend gemountet haben (Restart nach Deploy).'))
+              t('errCheckHint')))
         : null,
 
       // Aggregate summary — column-aligned with the session table.
@@ -1294,10 +1840,14 @@
                   h('td', {
                     className: 'ts-num', style: { width: colWidths[4] + '%', fontWeight: 500 },
                     title: grandCost > 0
-                      ? `Known-Ledger, monoton · Estimated: ${(grandCost * EUR_RATE).toFixed(2)} € (USD ${grandCost.toFixed(2)})${unpricedRows > 0 ? ` — ${unpricedRows} unpriced session(s) excluded` : ''}`
-                      : 'Known-Ledger, monoton',
+                      // The trailing fragment stays literal EN — the desktop
+                      // port kept it untranslated here (byte-identical rule);
+                      // t('unpricedExcluded') is only used in day-separator
+                      // and chip contexts on the desktop side.
+                      ? `${t('grandTotalTip', fmtCost(grandCost, { full: true }))}${unpricedRows > 0 ? ` — ${unpricedRows} unpriced session(s) excluded` : ''}`
+                      : t('knownLedger'),
                   }, grandCost > 0
-                    ? `${unpricedRows > 0 ? '≈ ' : ''}${(grandCost * EUR_RATE).toFixed(2)} €`
+                    ? `${unpricedRows > 0 ? '≈ ' : ''}${fmtCost(grandCost)}`
                     : '—'),
                 ))))
         : null,
@@ -1306,8 +1856,8 @@
       ledgerOk && grandInput + grandCached > 0
         ? h('div', { className: 'ts-card' },
             h('div', { className: 'ts-chlab' },
-              h('span', { title: 'Anteil der Prompt-Tokens, die aus dem Prompt-Cache kamen (statt neu berechnet)' }, '⚡ Cache-Hit'),
-              h('span', { title: `${fmt(grandCached)} von ${fmt(grandInput + grandCached)} Prompt-Tokens aus dem Cache` },
+              h('span', { title: t('cacheHitTip') }, t('cacheHitLabel')),
+              h('span', { title: t('cacheHitNumbers', fmt(grandCached), fmt(grandInput + grandCached)) },
                 Math.round(grandCached / (grandInput + grandCached) * 100) + '%')),
             h('div', { className: 'ts-chtrack' },
               h('div', { className: 'ts-chfill', style: { width: Math.min(100, grandCached / (grandInput + grandCached) * 100) + '%' } })))
@@ -1320,19 +1870,19 @@
       ledgerOk && rows.length > 0 && range !== 'day'
         ? h('div', { className: 'ts-hist' },
             h('div', { className: 'ts-chlab' },
-              h('span', { title: 'Tages-Balken: Höhe relativ zum stärksten Tag im Fenster' },
-                histMetric === 'cost' ? '€ pro Tag' : 'Tokens pro Tag'),
+              h('span', { title: t('histAxisTip') },
+                histMetric === 'cost' ? t('histCostPerDay', _currency === 'USD' ? '$' : '€') : t('histTokensPerDay')),
               h('div', { style: { display: 'flex', alignItems: 'center', gap: '0.125rem' } },
                 h('button', {
                   type: 'button',
                   className: 'tsbtn' + (histMetric !== 'cost' ? ' tint' : ''),
-                  title: 'Balkenhöhe = Tokens pro Tag',
+                  title: t('histTipTokens'),
                   onClick: () => setHistMetric('tokens'),
                 }, '🪙'),
                 h('button', {
                   type: 'button',
                   className: 'tsbtn' + (histMetric === 'cost' ? ' tint' : ''),
-                  title: 'Balkenhöhe = geschätzte Kosten (PAYG-Äquivalent) pro Tag',
+                  title: t('histTipCost'),
                   onClick: () => setHistMetric('cost'),
                 }, '€'))),
             h('div', { className: 'ts-hbars' },
@@ -1342,7 +1892,7 @@
                 return h('div', {
                   className: 'ts-hcol',
                   key: b.key,
-                  title: `${dayLabel(b.key)} · ${fmt(b.tokens)} Tokens · ≈ ${(b.cost * EUR_RATE).toFixed(2)} € · ${b.sessions} Sitzung${b.sessions === 1 ? '' : 'en'}`,
+                  title: t('histBarTip', dayLabel(b.key), `${fmt(b.tokens)} ${t('tokensWord')}`, fmtCost(b.cost), `${b.sessions} ${t('sessions', b.sessions)}`),
                 }, h('div', {
                   className: 'ts-hbar',
                   style: {
@@ -1362,15 +1912,15 @@
           : rows.length === 0
             ? h('div', { className: 'ts-empty' },
                 h('div', { style: { fontSize: '1rem', marginBottom: '0.25rem' } }, '🌫️'),
-                EMPTY_MSG[range] || 'No sessions')
+                t('empty_' + range))
             : h('table', { className: 'tstable', ref: tableRef },
                 h('thead', { className: 'ts-thead' },
                   h('tr', {},
-                    Th(0, 'l', 'Session', 'Sortieren: letzte Aktivität', 'activity'),
-                    Th(1, 'r', 'In', 'Sortieren: Input-Tokens', 'in'),
-                    Th(2, 'r', '⚡', 'Sortieren: Cache-Reads · Cached input tokens', 'cached'),
-                    Th(3, 'r', 'Out', 'Sortieren: Output-Tokens', 'out'),
-                    Th(4, 'r', '💰', 'Sortieren: geschätzte Kosten · Estimated cost (client-side pricing table)', 'cost'))),
+                    Th(0, 'l', 'Session', t('sortActivity'), 'activity'),
+                    Th(1, 'r', 'In', t('sortIn'), 'in'),
+                    Th(2, 'r', '⚡', t('sortCached'), 'cached'),
+                    Th(3, 'r', 'Out', t('sortOut'), 'out'),
+                    Th(4, 'r', '💰', t('sortCost'), 'cost'))),
                 h('tbody', {}, (() => {
                   // Day separators (with per-day totals) only in the
                   // default activity sort — any other sort interleaves
@@ -1404,22 +1954,22 @@
                           className: 'ts-day',
                           key: 'day-' + key,
                           onClick: () => toggleDayCollapse(key),
-                          title: `${dayLabel(key)} — ${fmtFull(a.in)} in · ${fmtFull(a.cached)} ⚡ · ${fmtFull(a.out)} out${a.cost > 0 ? ` · ${(a.cost * EUR_RATE).toFixed(2)} €` : ''}\n${isCollapsed ? 'Aufklappen' : 'Zuklappen'} (${daySessions} Sitzung${daySessions === 1 ? '' : 'en'})`,
+                          title: `${dayLabel(key)} — ${fmtFull(a.in)} in · ${fmtFull(a.cached)} ⚡ · ${fmtFull(a.out)} out${a.cost > 0 ? ` · ${fmtCost(a.cost)}` : ''}\n${isCollapsed ? t('expand') : t('collapse')} (${daySessions} ${t('sessions', daySessions)})`,
                         },
                           h('td', { className: 'dl' },
                             h('span', { style: { display: 'inline-block', width: '0.5rem', marginRight: '0.25rem', fontSize: '0.5rem' } }, isCollapsed ? '▸' : '▾'),
                             dayLabel(key),
                             isCollapsed ? h('span', { style: { marginLeft: '0.25rem', fontWeight: 400 } }, `(${daySessions})`) : null),
-                          h('td', { className: 'ts-num', title: `Input gesamt: ${fmtFull(a.in)}` }, fmt(a.in)),
-                          h('td', { className: 'ts-num ts-acc', title: `Cache-Reads gesamt: ${fmtFull(a.cached)}` }, fmt(a.cached)),
-                          h('td', { className: 'ts-num', title: `Output gesamt: ${fmtFull(a.out)}` }, fmt(a.out)),
+                          h('td', { className: 'ts-num', title: `${t('dayInTotal')} ${fmtFull(a.in)}` }, fmt(a.in)),
+                          h('td', { className: 'ts-num ts-acc', title: `${t('dayCachedTotal')} ${fmtFull(a.cached)}` }, fmt(a.cached)),
+                          h('td', { className: 'ts-num', title: `${t('dayOutTotal')} ${fmtFull(a.out)}` }, fmt(a.out)),
                           h('td', {
                             className: 'ts-num',
                             title: a.cost > 0
-                              ? `Geschätzt: ${(a.cost * EUR_RATE).toFixed(2)} € (USD ${a.cost.toFixed(2)})${a.unpriced > 0 ? ` — ${a.unpriced} unbepreis${a.unpriced === 1 ? 'te Sitzung' : 'te Sitzungen'} ausgeschlossen` : ''}`
-                              : 'Keine Kosten für diesen Tag',
+                              ? `${t('estimated')}: ${fmtCost(a.cost, { full: true })}${a.unpriced > 0 ? ` — ${a.unpriced} ${t('unpricedExcluded', a.unpriced)}` : ''}`
+                              : t('noCostDay'),
                           }, a.cost > 0
-                            ? `${a.unpriced > 0 ? '≈ ' : ''}${(a.cost * EUR_RATE).toFixed(2)} €`
+                            ? `${a.unpriced > 0 ? '≈ ' : ''}${fmtCost(a.cost)}`
                             : '—')))
                       }
                     }
@@ -1429,12 +1979,12 @@
                     const cached = u.cache_read || 0
                     const cost = row.cost
                     const modelTip = row.modelRows.length
-                      ? '\nModelle: ' + row.modelRows
+                      ? '\n' + t('modelsColon') + row.modelRows
                           .map(m => `${m.model}${m.task ? ' (' + m.task + ')' : ''}: in ${fmt(m.input_tokens)}, ⚡ ${fmt(m.cache_read_tokens)}, out ${fmt(m.output_tokens)}`)
                           .join(' · ')
                       : ''
                     const resetTip = row.hadReset
-                      ? '\n⚠ DB-Reset erkannt — Werte aus dem Known-Ledger (monoton)'
+                      ? '\n' + t('dbReset')
                       : ''
                     const ledgerOnlyTip = row.ledgerOnly
                       ? '\n● Nur im Ledger (Session aus state.db gelöscht)'
@@ -1451,7 +2001,7 @@
                         title: (row.title || row.id) + (row.lastActive ? ` (${fmtDate(row.lastActive)})` : '') + resetTip + ledgerOnlyTip + modelTip,
                       },
                         row.hadReset
-                          ? h('span', { style: { color: '#f59e0b', marginRight: '0.25rem' }, title: 'DB-Reset/Anomalie im Ledger verzeichnet — known-Werte bleiben monoton' }, '⚠')
+                          ? h('span', { style: { color: '#f59e0b', marginRight: '0.25rem' }, title: t('dbResetFlag') }, '⚠')
                           : null,
                         row.ledgerOnly
                           ? h('span', { className: 'ts-dim', style: { marginRight: '0.25rem' }, title: 'Nur im Ledger (aus state.db gelöscht)' }, '●')
@@ -1466,15 +2016,15 @@
                         : h('span', { className: 'ts-dim' }, '—')),
                       h('td', {
                         className: 'ts-num ts-outcell',
-                        title: maxOut > 0 ? `Output relativ zur größten Session (${fmt(maxOut)})` : undefined,
+                        title: maxOut > 0 ? t('outRelTip', fmt(maxOut)) : undefined,
                       }, outBar, h('span', { style: { position: 'relative', zIndex: 1 } }, fmt(u.output || 0))),
                       h('td', {
                         className: 'ts-num ts-dim',
                         title: cost != null
-                          ? `Estimated: ${(cost * EUR_RATE).toFixed(2)} € (USD ${cost.toFixed(4)})${modelTip}`
+                          ? `${t('estimatedRow')}: ${fmtCost(cost, { full: true })}${modelTip}`
                           : 'No price for ' + (u.model || 'this model'),
                       }, cost != null
-                        ? (cost * EUR_RATE).toFixed(2) + ' €'
+                        ? fmtCost(cost)
                         : '—')))
                   }
                   return out
@@ -1485,27 +2035,27 @@
       modelOpen && ledgerOk && modelAggList.length > 0
         ? h('div', { className: 'ts-brkwrap' },
             h('div', { className: 'ts-brkhead' },
-              h('span', { className: 'up' }, 'Modelle'),
-              h('span', {} , `${modelAggList.length} Modell${modelAggList.length === 1 ? '' : 'e'}`)),
+              h('span', { className: 'up' }, t('modelsHeader')),
+              h('span', {}, `${modelAggList.length} ${t('models', modelAggList.length)}`)),
             h('div', { className: 'ts-brklist' },
               modelAggList.map(m => {
                 const total = m.in + m.cached + m.out
-                const mCost = m.cost > 0 ? (m.cost * EUR_RATE).toFixed(2) + ' €' : null
-                const tip = m.sessions.size === 1 ? '1 Sitzung' : `${m.sessions.size} Sitzungen`
+                const mCost = m.cost > 0 ? fmtCost(m.cost) : null
+                const tip = m.sessions.size === 1 ? t('oneSession') : `${m.sessions.size} ${t('sessions', m.sessions.size)}`
                 const bar = maxModelTotal > 0 && total > 0
                   ? h('div', { className: 'ts-brkbar', style: { width: Math.max(4, total / maxModelTotal * 100) + '%' } })
                   : null
                 return h('div', {
                   className: 'ts-brkrow',
                   key: m.model,
-                  title: `${m.model}\nIn: ${fmtFull(m.in)} · ⚡: ${fmtFull(m.cached)} · Out: ${fmtFull(m.out)}\nGesamt: ${fmtFull(total)} Tokens · Calls: ${fmtFull(m.calls)} · ${tip}${mCost != null ? ` · Geschätzt: ${(m.cost * EUR_RATE).toFixed(2)} € (USD ${m.cost.toFixed(2)})` : (m.unpriced ? ' · kein Preis' : '')}`,
+                  title: `${m.model}\nIn: ${fmtFull(m.in)} · ⚡: ${fmtFull(m.cached)} · Out: ${fmtFull(m.out)}\n${t('grandTotalWord')} ${fmtFull(total)} ${t('tokensWord')} · Calls: ${fmtFull(m.calls)} · ${tip}${mCost != null ? ` · ${t('estimated')}: ${fmtCost(m.cost, { full: true })}` : (m.unpriced ? ' · ' + t('noPrice') : '')}`,
                 },
                   bar,
                   h('div', { className: 'ts-brkname' },
                     h('span', { className: 'nm' }, m.model),
                     h('span', { className: 'mt' }, tip)),
                   h('div', { className: 'ts-brknum' },
-                    h('span', { title: `Gesamttokens: ${fmtFull(total)}` }, fmt(total)),
+                    h('span', { title: `${t('totalTokens')}: ${fmtFull(total)}` }, fmt(total)),
                     h('span', { className: 'eur' }, mCost != null ? (m.unpriced ? '≈ ' : '') + mCost : '—')))
               })))
         : null,
@@ -1514,8 +2064,8 @@
       subOpen && ledgerOk && subRows.length > 0
         ? h('div', { className: 'ts-brkwrap' },
             h('div', { className: 'ts-brkhead' },
-              h('span', { className: 'up' }, 'Subagenten'),
-              h('span', {}, `${subRows.length} Subagent${subRows.length === 1 ? '' : 'en'}`)),
+              h('span', { className: 'up' }, t('subagentsHeader')),
+              h('span', {}, `${subRows.length} ${t('subagents', subRows.length)}`)),
             h('div', { className: 'ts-brklist' },
               subRows.map(sr => {
                 const total = sr.in + sr.cached + sr.out
@@ -1525,18 +2075,18 @@
                 return h('div', {
                   className: 'ts-brkrow',
                   key: sr.id,
-                  title: `${sr.title}\n${sr.id}${sr.parent ? `\nParent: ${sr.parent}` : ''}\nIn: ${fmtFull(sr.in)} · ⚡: ${fmtFull(sr.cached)} · Out: ${fmtFull(sr.out)}\nGesamt: ${fmtFull(total)} Tokens · Calls: ${fmtFull(sr.calls)}`,
+                  title: `${sr.title}\n${sr.id}${sr.parent ? `\nParent: ${sr.parent}` : ''}\nIn: ${fmtFull(sr.in)} · ⚡: ${fmtFull(sr.cached)} · Out: ${fmtFull(sr.out)}\n${t('grandTotalWord')} ${fmtFull(total)} ${t('tokensWord')} · Calls: ${fmtFull(sr.calls)}`,
                 },
                   bar,
                   h('div', { className: 'ts-brkname' },
                     h('span', { className: 'nm' }, sr.title),
                     sr.parent ? h('span', { className: 'mt' }, '↳ Parent') : null),
                   h('div', { className: 'ts-brknum' },
-                    h('span', { title: `Gesamttokens: ${fmtFull(total)}` }, fmt(total)),
+                    h('span', { title: `${t('totalTokens')}: ${fmtFull(total)}` }, fmt(total)),
                     h('span', {
                       className: 'eur',
-                      title: sr.cost > 0 ? `Geschätzte Kosten: ${(sr.cost * EUR_RATE).toFixed(2)} € (USD ${sr.cost.toFixed(2)})` : undefined,
-                    }, sr.cost > 0 ? (sr.unpriced ? '≈ ' : '') + (sr.cost * EUR_RATE).toFixed(2) + ' €' : '—')))
+                      title: sr.cost > 0 ? `${t('estimatedCost')}: ${fmtCost(sr.cost, { full: true })}` : undefined,
+                    }, sr.cost > 0 ? (sr.unpriced ? '≈ ' : '') + fmtCost(sr.cost) : '—')))
               })))
         : null,
 
@@ -1544,60 +2094,60 @@
       auxOpen && ledgerOk && auxAggList.length > 0
         ? h('div', { className: 'ts-brkwrap' },
             h('div', { className: 'ts-brkhead' },
-              h('span', { className: 'up' }, 'Aux-Tasks'),
-              h('span', {}, `${auxAggList.length} Task${auxAggList.length === 1 ? '' : 's'}`)),
+              h('span', { className: 'up' }, t('auxHeader')),
+              h('span', {}, `${auxAggList.length} ${t('auxTasks', auxAggList.length)}`)),
             h('div', { className: 'ts-brklist' },
               auxAggList.map(a => {
                 const total = a.in + a.cached + a.out
-                const tip = a.sessions.size === 1 ? '1 Sitzung' : `${a.sessions.size} Sitzungen`
+                const tip = a.sessions.size === 1 ? t('oneSession') : `${a.sessions.size} ${t('sessions', a.sessions.size)}`
                 const bar = maxAuxTotal > 0 && total > 0
                   ? h('div', { className: 'ts-brkbar', style: { width: Math.max(4, total / maxAuxTotal * 100) + '%' } })
                   : null
                 const modelTip = a.models.size > 1
-                  ? '\nModelle: ' + [...a.models.entries()]
+                  ? '\n' + t('modelsColon') + [...a.models.entries()]
                       .map(([mo, v]) => `${mo}: in ${fmt(v.in)}, ⚡ ${fmt(v.cached)}, out ${fmt(v.out)}`)
                       .join(' · ')
                   : ''
                 return h('div', {
                   className: 'ts-brkrow',
                   key: a.task,
-                  title: `${auxLabel(a.task)} (${a.task})\nIn: ${fmtFull(a.in)} · ⚡: ${fmtFull(a.cached)} · Out: ${fmtFull(a.out)}\nGesamt: ${fmtFull(total)} Tokens · Calls: ${fmtFull(a.calls)} · ${tip}${a.cost > 0 ? ` · Geschätzt: ${(a.cost * EUR_RATE).toFixed(2)} € (USD ${a.cost.toFixed(2)})${a.unpriced ? ' (≈ — unpriced Rows ausgeschlossen)' : ''}` : ''}${modelTip}`,
+                  title: `${auxLabel(a.task)} (${a.task})\nIn: ${fmtFull(a.in)} · ⚡: ${fmtFull(a.cached)} · Out: ${fmtFull(a.out)}\n${t('grandTotalWord')} ${fmtFull(total)} ${t('tokensWord')} · Calls: ${fmtFull(a.calls)} · ${tip}${a.cost > 0 ? ` · ${t('estimated')}: ${fmtCost(a.cost, { full: true })}${a.unpriced ? ' ' + t('auxUnpricedNote') : ''}` : ''}${modelTip}`,
                 },
                   bar,
                   h('div', { className: 'ts-brkname' },
                     h('span', { className: 'nm' }, auxLabel(a.task)),
                     h('span', { className: 'mt' }, tip)),
                   h('div', { className: 'ts-brknum' },
-                    h('span', { title: `Gesamttokens: ${fmtFull(total)}` }, fmt(total)),
+                    h('span', { title: `${t('totalTokens')}: ${fmtFull(total)}` }, fmt(total)),
                     h('span', {
                       className: 'eur',
-                      title: a.cost > 0 ? `Geschätzte Kosten: ${(a.cost * EUR_RATE).toFixed(2)} € (USD ${a.cost.toFixed(2)})` : undefined,
-                    }, a.cost > 0 ? (a.unpriced ? '≈ ' : '') + (a.cost * EUR_RATE).toFixed(2) + ' €' : '—')))
+                      title: a.cost > 0 ? `${t('estimatedCost')}: ${fmtCost(a.cost, { full: true })}` : undefined,
+                    }, a.cost > 0 ? (a.unpriced ? '≈ ' : '') + fmtCost(a.cost) : '—')))
               })))
         : null,
 
       // Footer: session/model counts + active calendar window.
       ledgerOk
         ? h('div', { className: 'ts-foot' },
-            `${rows.length} Sitzung${rows.length === 1 ? '' : 'en'} · `,
+            `${rows.length} ${t('sessions', rows.length)} · `,
             h('button', {
               type: 'button',
               className: 'tslink' + (modelOpen ? ' on' : ''),
               title: modelOpen
-                ? 'Modell-Liste zuklappen'
-                : 'Modell-Liste aufklappen (auf- und absteigend über das aktive Fenster)',
+                ? t('modelsTipClose')
+                : t('modelsTipOpen'),
               onClick: () => setModelOpen(!modelOpen),
-            }, `${modelAggList.length} Modell${modelAggList.length === 1 ? '' : 'e'}`),
+            }, `${modelAggList.length} ${t('models', modelAggList.length)}`),
             subRows.length > 0
               ? [' · ',
                  h('button', {
                    type: 'button',
                    className: 'tslink' + (subOpen ? ' on' : ''),
                    title: subOpen
-                     ? 'Subagenten-Liste zuklappen'
-                     : 'Subagenten-Liste aufklappen (delegierte Tasks im aktiven Fenster)',
+                     ? t('subTipClose')
+                     : t('subTipOpen'),
                    onClick: () => setSubOpen(!subOpen),
-                 }, `${subRows.length} Subagent${subRows.length === 1 ? '' : 'en'}`)]
+                 }, `${subRows.length} ${t('subagents', subRows.length)}`)]
               : null,
             auxAggList.length > 0
               ? [' · ',
@@ -1605,10 +2155,10 @@
                    type: 'button',
                    className: 'tslink' + (auxOpen ? ' on' : ''),
                    title: auxOpen
-                     ? 'Aux-Task-Liste zuklappen'
-                     : 'Aux-Task-Liste aufklappen (Auxiliary-Calls: Hintergrund-Review, Kompression, Vision, Titel, Approval — im aktiven Fenster)',
+                     ? t('auxTipClose')
+                     : t('auxTipOpen'),
                    onClick: () => setAuxOpen(!auxOpen),
-                 }, `${auxAggList.length} Aux-Task${auxAggList.length === 1 ? '' : 's'}`)]
+                 }, `${auxAggList.length} ${t('auxTasks', auxAggList.length)}`)]
               : null,
             ` · ${windowLabel(range)}`)
         : null,
