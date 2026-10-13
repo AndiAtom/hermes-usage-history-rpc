@@ -844,6 +844,8 @@
       errBackendDown: 'Ledger backend unreachable: ',
       errRetry: 'Retry',
       errCheckHint: 'Check: systemctl status token-stats-ledger · the dashboard process must have the plugin backend mounted (restart after deploy).',
+      ledgerOnlyNote: '\n● Ledger-only (session deleted from state.db)',
+      webPortTitle: 'Web port of the desktop pane',
     },
     de: {
       show_tokens: '🪙 Tokens',
@@ -934,6 +936,8 @@
       errBackendDown: 'Ledger-Backend nicht erreichbar: ',
       errRetry: 'Erneut versuchen',
       errCheckHint: 'Prüfen: systemctl status token-stats-ledger · Dashboard-Prozess muss das Plugin-Backend gemountet haben (Restart nach Deploy).',
+      ledgerOnlyNote: '\n● Nur im Ledger (Session aus state.db gelöscht)',
+      webPortTitle: 'Web-Port der Desktop-Pane',
     },
     fr: {
       show_tokens: '🪙 Tokens',
@@ -1018,6 +1022,8 @@
       errBackendDown: 'Backend du ledger inaccessible : ',
       errRetry: 'Réessayer',
       errCheckHint: 'Vérifier : systemctl status token-stats-ledger · le processus du dashboard doit avoir monté le plugin backend (redémarrage après déploiement).',
+      ledgerOnlyNote: '\n● Ledger uniquement (session supprimée de state.db)',
+      webPortTitle: 'Portage web de la pane desktop',
     },
     nl: {
       show_tokens: '🪙 Tokens',
@@ -1102,6 +1108,8 @@
       errBackendDown: 'Ledger-backend niet bereikbaar: ',
       errRetry: 'Opnieuw proberen',
       errCheckHint: 'Controleer: systemctl status token-stats-ledger · het dashboard-proces moet de plugin-backend gemount hebben (herstart na deploy).',
+      ledgerOnlyNote: '\n● Alleen in het ledger (sessie verwijderd uit state.db)',
+      webPortTitle: 'Web-port van de desktop-pane',
     },
     it: {
       show_tokens: '🪙 Tokens',
@@ -1186,6 +1194,8 @@
       errBackendDown: 'Backend del ledger non raggiungibile: ',
       errRetry: 'Riprova',
       errCheckHint: 'Verifica: systemctl status token-stats-ledger · il processo dashboard deve aver montato il plugin backend (riavvio dopo il deploy).',
+      ledgerOnlyNote: '\n● Solo nel ledger (sessione eliminata da state.db)',
+      webPortTitle: 'Port web della pane desktop',
     },
   }
 
@@ -1750,7 +1760,7 @@
     }
 
     // ── Render ────────────────────────────────────────────────────────
-    return h('div', { className: 'tsweb', title: `Token Stats ${VERSION} · Web-Port der Desktop-Pane` },
+    return h('div', { className: 'tsweb', title: `Token Stats ${VERSION} · ${t('webPortTitle')}` },
       // Header + history window selector
       h('div', { className: 'ts-head' },
         h('span', { className: 'ts-title' }, 'Token Stats'),
@@ -1987,7 +1997,7 @@
                       ? '\n' + t('dbReset')
                       : ''
                     const ledgerOnlyTip = row.ledgerOnly
-                      ? '\n● Nur im Ledger (Session aus state.db gelöscht)'
+                      ? t('ledgerOnlyNote')
                       : ''
                     const outBar = maxOut > 0 && (u.output || 0) > 0
                       ? h('div', {
@@ -2004,7 +2014,7 @@
                           ? h('span', { style: { color: '#f59e0b', marginRight: '0.25rem' }, title: t('dbResetFlag') }, '⚠')
                           : null,
                         row.ledgerOnly
-                          ? h('span', { className: 'ts-dim', style: { marginRight: '0.25rem' }, title: 'Nur im Ledger (aus state.db gelöscht)' }, '●')
+                          ? h('span', { className: 'ts-dim', style: { marginRight: '0.25rem' }, title: t('ledgerOnlyNote').replace(/^\n● /, '') }, '●')
                           : null,
                         row.title || row.id.slice(0, 12)),
                       h('td', { className: 'ts-num' }, fmt(u.input || 0)),
