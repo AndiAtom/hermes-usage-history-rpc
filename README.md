@@ -152,6 +152,14 @@ sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"   # same before/afte
 # Desktop app consumes it via host.request('usage.history', {days: 7})
 ```
 
+## Roadmap
+
+**Next release** — the web dashboard entry gains the same **language
+toggle** (DE, EN default, FR, NL, IT) and **currency toggle** (€/$) as the
+desktop plugin's v5.0.0, ported under the existing lockstep/parity rule.
+The backend itself (ledger daemon, routes) is unchanged — only
+`dashboard/web-entry.js` ships with the next version.
+
 ## Context
 
 - Companion to the **[token-stats desktop plugin](https://github.com/AndiAtom/hermes-token-stats)**
