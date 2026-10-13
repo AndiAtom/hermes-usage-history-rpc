@@ -154,14 +154,15 @@ sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"   # same before/afte
 
 ## Roadmap
 
-**Shipped in v5.0.0-web.1** — the web dashboard entry now has the same
+**Shipped in v5.0.0-web.2** — the web dashboard entry now has the same
 **language toggle** (DE, EN default, FR, NL, IT) and **currency toggle**
-(€/$) as the desktop plugin's v5.0.0, ported under the existing
+(€/$) as the desktop plugin's v5.0.x, ported under the existing
 lockstep/parity rule (84-key dictionaries, byte-identical values). The
 backend itself (ledger daemon, routes) is unchanged — only
 `dashboard/web-entry.js` and `manifest.json` changed. Settings persist
 via `localStorage` (`token-stats:lang` / `token-stats:currency`) — same
-keys as the desktop chip menu.
+keys as the desktop. Since web.2 the histogram's cost-metric toggle icon
+follows the active currency (€/$) instead of a hardcoded €.
 
 ## Context
 
