@@ -2,7 +2,7 @@
  * Token Stats — Hermes Web-Dashboard plugin entry (companion to the
  * desktop plugin.js in AndiAtom/hermes-token-stats).
  *
- * @version v5.0.0-web.2
+ * @version v5.1.0-web.1
  *
  * Port of the desktop pane design to the web dashboard plugin SDK
  * (window.__HERMES_PLUGIN_SDK__ + window.__HERMES_PLUGINS__.register).
@@ -49,7 +49,7 @@
   const fetchJSON = SDK.fetchJSON
   const h = React.createElement
   const ID = 'token-stats'
-  const VERSION = 'v5.0.0-web.2'
+  const VERSION = 'v5.1.0-web.1'
 
   // ── Injected stylesheet (namespaced .ts-* classes) ─────────────────
   // Built on theme vars so the active dashboard theme flows through:
@@ -724,6 +724,16 @@
   // USD → EUR conversion factor (Mistral La Plateforme lists GLM 5.2 at
   // $1.40 / €1.19 → 0.85). Update when the official EUR listing shifts.
   const EUR_RATE = 0.85
+  // v5.1.0: EU-endpoint price toggle (region mode). Mistral's api.eu.mistral.ai
+  // charges a flat 1.1× on all token prices (verified 2026-10-22). PRICES stay
+  // at global list prices; the active region multiplies at this single
+  // pricing choke point. _region is the module-level holder (web has no
+  // atoms) written by the component on every render (same pattern as
+  // _lang/_currency).
+  const EU_FACTOR = 1.1
+  let _region = 'global'
+  function regionFactor() { return _region === 'eu' ? EU_FACTOR : 1 }
+
 
   // ── I18N + currency (v5.0.0) ───────────────────────────────────────
   // VERBATIM PORT from the desktop plugin.js (commit 36c84b5): same
@@ -768,6 +778,7 @@
       menu_display: 'Display',
       menu_language: 'Language',
       menu_currency: 'Currency',
+      menu_region: 'Region (EU endpoint +10%)',
       range_tip_day: 'Today (from 0:00)',
       range_tip_workweek: 'Current workweek: Mon 0:00 – Fri 23:59:59',
       range_tip_week: 'Current calendar week: Mon 0:00 – Sun 23:59:59',
@@ -856,6 +867,7 @@
       menu_display: 'Display',
       menu_language: 'Language',
       menu_currency: 'Currency',
+      menu_region: 'Region (EU-Endpoint +10%)',
       range_tip_day: 'Heute (ab 0:00 Uhr)',
       range_tip_workweek: 'Laufende Arbeitswoche: Mo 0:00 – Fr 23:59:59',
       range_tip_week: 'Laufende Kalenderwoche: Mo 0:00 – So 23:59:59',
@@ -948,6 +960,7 @@
       menu_display: 'Display',
       menu_language: 'Language',
       menu_currency: 'Currency',
+      menu_region: 'Région (endpoint UE +10%)',
       range_tip_day: 'Aujourd\u2019hui (à partir de 0:00)',
       range_tip_workweek: 'Semaine de travail en cours : lun. 0:00 – ven. 23:59:59',
       range_tip_week: 'Semaine calendaire en cours : lun. 0:00 – dim. 23:59:59',
@@ -1034,6 +1047,7 @@
       menu_display: 'Display',
       menu_language: 'Language',
       menu_currency: 'Currency',
+      menu_region: 'Regio (EU-endpoint +10%)',
       range_tip_day: 'Vandaag (vanaf 0:00)',
       range_tip_workweek: 'Lopende werkweek: ma 0:00 – vr 23:59:59',
       range_tip_week: 'Lopende kalenderweek: ma 0:00 – zo 23:59:59',
@@ -1120,6 +1134,7 @@
       menu_display: 'Display',
       menu_language: 'Language',
       menu_currency: 'Currency',
+      menu_region: 'Regione (endpoint UE +10%)',
       range_tip_day: 'Oggi (dalle 0:00)',
       range_tip_workweek: 'Settimana lavorativa corrente: lun 0:00 – ven 23:59:59',
       range_tip_week: 'Settimana di calendario corrente: lun 0:00 – dom 23:59:59',
@@ -1258,7 +1273,9 @@
     if (!input && !cached && !output) return null
     // "input" from the gateway excludes cache reads (CanonicalUsage.input_tokens
     // is fresh input); bill cached tokens at the cheaper cache-read rate.
-    const cost = (input * p.input + cached * p.cached + output * p.output) / 1_000_000
+    // v5.1.0: EU-region premium applies to the resolved price (all three
+    // rates) — factor at the single choke point, like the desktop.
+    const cost = (input * p.input + cached * p.cached + output * p.output) * regionFactor() / 1_000_000
     return cost
   }
 
@@ -1539,11 +1556,16 @@
     const [currency, setCurrencyState] = useState(initLS('token-stats:currency', ['EUR', 'USD'], 'EUR'))
     const setLang = (l) => { setLangState(l); lsSet('token-stats:lang', l) }
     const setCurrency = (c) => { setCurrencyState(c); lsSet('token-stats:currency', c) }
+    // v5.1.0: region mode (global vs. Mistral EU endpoint at 1.1×) — same
+    // localStorage key convention as lang/currency, same web pattern.
+    const [region, setRegionState] = useState(initLS('token-stats:region', ['global', 'eu'], 'global'))
+    const setRegion = (r) => { setRegionState(r); lsSet('token-stats:region', r) }
     // Publish the current React state to the module-level holders BEFORE
-    // any helper call below — t()/fmtCost()/fmtFull()/dayLabel() read
-    // these (web equivalent of the desktop atoms' LANG.get()).
+    // any helper call below — t()/fmtCost()/fmtFull()/dayLabel()/estimateCost()
+    // read these (web equivalent of the desktop atoms' LANG.get()).
     _lang = lang
     _currency = currency
+    _region = region
     const tableRef = useRef(null)
     const setAndSaveColWidths = (w) => { setColWidths(w); saveColWidths(w) }
 
@@ -1817,7 +1839,21 @@
             type: 'button',
             className: 'ts-seg-btn' + (currency === 'USD' ? ' active' : ''),
             onClick: () => setCurrency('USD'),
-          }, '$'))),
+          }, '$')),
+        // v5.1.0: region toggle (global list price vs. Mistral EU endpoint
+        // at 1.1×) — same segmented style as currency, persisted key
+        // token-stats:region.
+        h('div', { className: 'ts-seg', title: t('menu_region') },
+          h('button', {
+            type: 'button',
+            className: 'ts-seg-btn' + (region === 'global' ? ' active' : ''),
+            onClick: () => setRegion('global'),
+          }, '🌐'),
+          h('button', {
+            type: 'button',
+            className: 'ts-seg-btn' + (region === 'eu' ? ' active' : ''),
+            onClick: () => setRegion('eu'),
+          }, 'EU'))),
 
       // Backend error card (fetch failed entirely — show a retry).
       ledger && !ledgerOk
