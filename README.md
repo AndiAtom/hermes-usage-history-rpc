@@ -154,6 +154,16 @@ sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"   # same before/afte
 
 ## Roadmap
 
+**Shipped in v5.1.1-web.1** — **region (EU endpoint) pricing toggle** for
+the web dashboard pane, lockstep with the desktop plugin's v5.1.1:
+🌐/EU segmented buttons in the aggregate summary box, directly before the
+Total label (desktop parity; v5.1.0-web.1 briefly had them in the header
+toggle row). EU mode multiplies all token prices by 1.1 at the estimateCost
+choke point — Mistral's api.eu.mistral.ai premium. Persisted via
+`localStorage` (`token-stats:region`), same key as the desktop. Backend
+(ledger daemon, routes) unchanged — only `dashboard/web-entry.js` and
+`manifest.json` changed. Unpriced rows stay `—`, free models stay `0,00 €`.
+
 **Shipped in v5.0.0-web.2** — the web dashboard entry now has the same
 **language toggle** (DE, EN default, FR, NL, IT) and **currency toggle**
 (€/$) as the desktop plugin's v5.0.x, ported under the existing
