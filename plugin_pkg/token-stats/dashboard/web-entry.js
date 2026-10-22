@@ -2,7 +2,7 @@
  * Token Stats — Hermes Web-Dashboard plugin entry (companion to the
  * desktop plugin.js in AndiAtom/hermes-token-stats).
  *
- * @version v5.1.0-web.1
+ * @version v5.1.1-web.1
  *
  * Port of the desktop pane design to the web dashboard plugin SDK
  * (window.__HERMES_PLUGIN_SDK__ + window.__HERMES_PLUGINS__.register).
@@ -49,7 +49,7 @@
   const fetchJSON = SDK.fetchJSON
   const h = React.createElement
   const ID = 'token-stats'
-  const VERSION = 'v5.1.0-web.1'
+  const VERSION = 'v5.1.1-web.1'
 
   // ── Injected stylesheet (namespaced .ts-* classes) ─────────────────
   // Built on theme vars so the active dashboard theme flows through:
@@ -85,6 +85,15 @@
  color:var(--tsw-t4);cursor:pointer;border-radius:.25rem;font-family:inherit;line-height:1.4}
 .ts-seg-btn:hover{background:var(--tsw-stroke);color:var(--tsw-t3)}
 .ts-seg-btn.active{background:color-mix(in srgb, var(--midground-base) 25%, transparent);
+ color:var(--midground-base);font-weight:500}
+/* v5.1.1-web.1: inline region toggle in the summary box (compact twin of
+ .ts-seg/.ts-seg-btn, sized for the quaternary Total label row) */
+.ts-reg{display:inline-flex;align-items:center;gap:.125rem;margin-right:.25rem;vertical-align:middle}
+.ts-reg-btn{background:transparent;border:none;padding:0;width:1rem;height:.875rem;line-height:.875rem;
+ font-size:.5625rem;cursor:pointer;border-radius:.125rem;color:var(--tsw-q,inherit);
+ text-align:center;vertical-align:middle}
+.ts-reg-btn:hover{color:var(--midground)}
+.ts-reg-btn.active{background:color-mix(in srgb, var(--midground-base) 25%, transparent);
  color:var(--midground-base);font-weight:500}
 .ts-card{border:1px solid var(--tsw-stroke);border-radius:.375rem;
  padding:.375rem .5rem;flex-shrink:0}
@@ -1839,21 +1848,7 @@
             type: 'button',
             className: 'ts-seg-btn' + (currency === 'USD' ? ' active' : ''),
             onClick: () => setCurrency('USD'),
-          }, '$')),
-        // v5.1.0: region toggle (global list price vs. Mistral EU endpoint
-        // at 1.1×) — same segmented style as currency, persisted key
-        // token-stats:region.
-        h('div', { className: 'ts-seg', title: t('menu_region') },
-          h('button', {
-            type: 'button',
-            className: 'ts-seg-btn' + (region === 'global' ? ' active' : ''),
-            onClick: () => setRegion('global'),
-          }, '🌐'),
-          h('button', {
-            type: 'button',
-            className: 'ts-seg-btn' + (region === 'eu' ? ' active' : ''),
-            onClick: () => setRegion('eu'),
-          }, 'EU'))),
+          }, '$'))),
 
       // Backend error card (fetch failed entirely — show a retry).
       ledger && !ledgerOk
@@ -1874,7 +1869,24 @@
             h('table', { className: 'tstable' },
               h('tbody', {},
                 h('tr', { className: 'tsq' },
-                  h('td', { style: { width: colWidths[0] + '%' } }, 'Total'),
+                  // v5.1.1-web.1: region toggle inline in the summary box,
+                  // directly before the Total label (desktop v5.1.1 parity —
+                  // Andi placement request, header row got crowded).
+                  h('td', { style: { width: colWidths[0] + '%' } },
+                    h('span', { className: 'ts-reg' },
+                      h('button', {
+                        type: 'button',
+                        className: 'ts-reg-btn' + (region === 'global' ? ' active' : ''),
+                        title: t('menu_region') + ': global',
+                        onClick: () => setRegion('global'),
+                      }, '🌐'),
+                      h('button', {
+                        type: 'button',
+                        className: 'ts-reg-btn' + (region === 'eu' ? ' active' : ''),
+                        title: t('menu_region') + ': eu',
+                        onClick: () => setRegion('eu'),
+                      }, 'EU')),
+                    'Total'),
                   h('td', { className: 'ts-num', style: { width: colWidths[1] + '%', fontWeight: 500 } }, fmt(grandInput)),
                   h('td', {
                     className: 'ts-num ts-acc', style: { width: colWidths[2] + '%', fontWeight: 500 },
