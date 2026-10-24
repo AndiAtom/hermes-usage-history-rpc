@@ -154,6 +154,12 @@ sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"   # same before/afte
 
 ## Roadmap
 
+**Shipped in v5.1.2-web.1** — **`zai-glm-5-3-flash` pricing** (Z.ai GLM
+5.3 Flash on La Plateforme, official listing: $0.15 input / $0.03 cached /
+$0.50 output per 1M tokens), lockstep with the desktop plugin's v5.1.2.
+Backend (ledger daemon, routes) unchanged — only `dashboard/web-entry.js`
+and `manifest.json` changed.
+
 **Shipped in v5.1.1-web.1** — **region (EU endpoint) pricing toggle** for
 the web dashboard pane, lockstep with the desktop plugin's v5.1.1:
 🌐/EU segmented buttons in the aggregate summary box, directly before the
