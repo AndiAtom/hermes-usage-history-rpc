@@ -2,7 +2,7 @@
  * Token Stats — Hermes Web-Dashboard plugin entry (companion to the
  * desktop plugin.js in AndiAtom/hermes-token-stats).
  *
- * @version v5.1.2-web.1
+ * @version v5.2.0-web.1
  *
  * Port of the desktop pane design to the web dashboard plugin SDK
  * (window.__HERMES_PLUGIN_SDK__ + window.__HERMES_PLUGINS__.register).
@@ -49,7 +49,7 @@
   const fetchJSON = SDK.fetchJSON
   const h = React.createElement
   const ID = 'token-stats'
-  const VERSION = 'v5.1.2-web.1'
+  const VERSION = 'v5.2.0-web.1'
 
   // ── Injected stylesheet (namespaced .ts-* classes) ─────────────────
   // Built on theme vars so the active dashboard theme flows through:
@@ -840,6 +840,7 @@
       auxUnpricedNote: '(≈ — unpriced rows excluded)',
       noCostDay: 'No cost for this day',
       grandTotalTip: (cost) => `Known-Ledger, monotonic · Estimated: ${cost}`,
+      windowSessions: 'Sessions in window',
       noPrice: 'no price',
       totalTokens: 'Total tokens',
       auxBgReview: 'Background review',
@@ -933,6 +934,7 @@
       // Today's DE summary tooltip is mixed ('Estimated:' stays English) —
       // byte-identical rule, do not germanize.
       grandTotalTip: (cost) => `Known-Ledger, monoton · Estimated: ${cost}`,
+      windowSessions: 'Sitzungen im Fenster',
       noPrice: 'kein Preis',
       totalTokens: 'Gesamttokens',
       auxBgReview: 'Hintergrund-Review',
@@ -1020,6 +1022,7 @@
       auxUnpricedNote: '(≈ — lignes non tarifées exclues)',
       noCostDay: 'Aucun coût pour ce jour',
       grandTotalTip: (cost) => `Known-Ledger, monotone · Estimé : ${cost}`,
+      windowSessions: 'Sessions dans la fenêtre',
       noPrice: 'pas de prix',
       totalTokens: 'Total tokens',
       auxBgReview: 'Revue en arrière-plan',
@@ -1107,6 +1110,7 @@
       auxUnpricedNote: '(≈ — unpriced rijen uitgesloten)',
       noCostDay: 'Geen kosten voor deze dag',
       grandTotalTip: (cost) => `Known-Ledger, monotonic · Geschat: ${cost}`,
+      windowSessions: 'Sessies in venster',
       noPrice: 'geen prijs',
       totalTokens: 'Totaal tokens',
       auxBgReview: 'Achtergrondreview',
@@ -1194,6 +1198,7 @@
       auxUnpricedNote: '(≈ — righe non prezzate escluse)',
       noCostDay: 'Nessun costo per questo giorno',
       grandTotalTip: (cost) => `Known-Ledger, monotono · Stimato: ${cost}`,
+      windowSessions: 'Sessioni nella finestra',
       noPrice: 'nessun prezzo',
       totalTokens: 'Tokens totali',
       auxBgReview: 'Revisione in background',
@@ -1502,7 +1507,7 @@
       const load = async () => {
         try {
           const res = await fetchJSON(
-            `/api/plugins/token-stats/ledger?since=${since}&until=${until}&days=0&limit=200`)
+            `/api/plugins/token-stats/ledger?since=${since}&until=${until}&days=0&limit=200&totals=1`)
           if (!dead) setState({ ok: true, res })
         } catch (e) {
           if (!dead) setState({ ok: false, error: String(e && e.message ? e.message : e) })
@@ -1743,14 +1748,33 @@
     const histMax = histMetric === 'cost' ? histMaxCost : histMaxTokens
 
     // Aggregates over the unified rows.
-    const grandInput = rows.reduce((s, r) => s + (r.u.input || 0), 0)
-    const grandCached = rows.reduce((s, r) => s + (r.u.cache_read || 0), 0)
-    const grandOutput = rows.reduce((s, r) => s + (r.u.output || 0), 0)
+    // v5.2.0-web: with totals=1 the backend aggregates the FULL window
+    // server-side (limit-independent). Server totals win; the local
+    // rows-reduce stays as fallback for old backends without the param.
+    const ledTotals = ledgerOk && ledger.res.totals ? ledger.res.totals : null
+    const grandInput = ledTotals ? ledTotals.input_tokens
+      : rows.reduce((s, r) => s + (r.u.input || 0), 0)
+    const grandCached = ledTotals ? ledTotals.cache_read_tokens
+      : rows.reduce((s, r) => s + (r.u.cache_read || 0), 0)
+    const grandOutput = ledTotals ? ledTotals.output_tokens
+      : rows.reduce((s, r) => s + (r.u.output || 0), 0)
     let grandCost = 0
     let unpricedRows = 0
-    for (const r of rows) {
-      if (r.cost != null) grandCost += r.cost
-      else if ((r.u.input || 0) + (r.u.output || 0) > 0) unpricedRows++
+    if (ledTotals) {
+      for (const m of (ledTotals.by_model || [])) {
+        const c = estimateCost({
+          input: m.input_tokens, cache_read: m.cache_read_tokens,
+          output: m.output_tokens, model: m.model,
+          billing_provider: m.billing_provider,
+        })
+        if (c != null) grandCost += c
+        else if ((m.input_tokens || 0) + (m.output_tokens || 0) > 0) unpricedRows++
+      }
+    } else {
+      for (const r of rows) {
+        if (r.cost != null) grandCost += r.cost
+        else if ((r.u.input || 0) + (r.u.output || 0) > 0) unpricedRows++
+      }
     }
 
     const onSortHeader = (key) => {
@@ -2186,9 +2210,12 @@
         : null,
 
       // Footer: session/model counts + active calendar window.
+      // v5.2.0-web: session count covers the FULL window (totals.sessions).
       ledgerOk
         ? h('div', { className: 'ts-foot' },
-            `${rows.length} ${t('sessions', rows.length)} · `,
+            h('span', {
+              title: ledTotals ? t('windowSessions') : undefined,
+            }, `${ledTotals ? ledTotals.sessions : rows.length} ${t('sessions', ledTotals ? ledTotals.sessions : rows.length)} · `),
             h('button', {
               type: 'button',
               className: 'tslink' + (modelOpen ? ' on' : ''),
