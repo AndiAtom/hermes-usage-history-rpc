@@ -154,6 +154,13 @@ sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"   # same before/afte
 
 ## Roadmap
 
+**Shipped in v0.7.1 / v5.2.1-web.1** — **display limit raised 200 → 2000**
+in the web entry, lockstep with the desktop plugin's v5.2.1: the
+activity-sorted top-200 cut fell *inside* a busy month window and hid
+entire oldest days from the session list and histogram (all 18 sessions
+of Oct 1 invisible). Backend (ledger daemon, routes) unchanged — only
+`dashboard/web-entry.js` and `manifest.json` changed.
+
 **Shipped in v0.7.0 / v5.2.0-web.1** — **server-side window aggregation**
 on `/ledger` (`totals=1`), lockstep with the desktop plugin's v5.2.0:
 
