@@ -64,6 +64,25 @@ Data sources: `sessions` (lifetime totals per session) + `session_model_usage`
 The RPCs (`usage.history`/`usage.totals`) remain as **legacy fallback** for
 the client (old gateways, OAuth remotes where `ctx.rest` is a no-op).
 
+## Data availability — no backfill
+
+> [!IMPORTANT]
+> **The ledger starts recording at its first start — it does not backfill.**
+> The daemon polls live and accumulates; it never imports historical usage
+> that predates its installation. On the first poll every row is
+> baselined with `known = live` (the current `state.db` values) — so
+> pre-install usage that survived in `state.db` is included, but usage
+> that `state.db` had already lost to compression resets before the
+> ledger existed is not, and it never will be.
+>
+> Consequence for the client views: every window (1d/5d/7d/30d/∞) is only
+> complete where it lies entirely after the ledger's first start — a
+> mid-month install undercounts (or misses) the days before it, and the
+> 30d running-month view only becomes fully trustworthy once a month
+> boundary has passed since the install. `usage.history` /
+> `usage.totals` (legacy, state.db-direct) have the same leading gap
+> plus their own monotonicity caveats.
+
 ## Web dashboard plugin (v0.6.0)
 
 `plugin_pkg/token-stats/dashboard/` also ships a **web-dashboard plugin**
