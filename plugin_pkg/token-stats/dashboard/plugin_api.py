@@ -19,6 +19,7 @@ that exist only in the ledger (deleted from state.db via ON DELETE
 CASCADE) stay visible — money is spent.
 """
 
+import datetime
 import glob
 import os
 import sqlite3
@@ -31,6 +32,17 @@ LEDGER_BASE = os.environ.get("LEDGER_BASE", os.path.expanduser("~/token-stats-le
 STATE_DB = os.environ.get(
     "LEDGER_STATE_DB", os.path.expanduser("~/.hermes/state.db")
 )
+
+
+def _day_key(ts):
+    """Local-time 'YYYY-MM-DD' for a session-activity timestamp — the
+    same day attribution the client's buildHistogram uses (tokens count
+    on the activity day), so by_day and the histogram agree by design."""
+    if not ts:
+        ts = 0
+    return datetime.datetime.fromtimestamp(
+        ts, datetime.timezone.utc
+    ).astimezone().strftime("%Y-%m-%d")
 
 
 def _ro(path):
@@ -123,7 +135,7 @@ async def profiles():
 @router.get("/ledger")
 async def ledger(days: int = 30, since: float = 0, until: float = 0,
                 limit: int = 200, session_id: str = "", models: bool = True,
-                profile: str = "default"):
+                totals: int = 0, profile: str = "default"):
     """Monotonic known counters, shape-compatible with usage.history.
 
     Returns sessions[] (one entry per session_id, sums of known counters,
@@ -182,8 +194,88 @@ async def ledger(days: int = 30, since: float = 0, until: float = 0,
     sids = [s for s in by_sid
             if activity(s) >= cutoff and (not upper or activity(s) < upper)]
     if session_id:
+        # Focus-session queries (chip): totals, if requested, scope to
+        # that session too — not the whole window.
         sids = [s for s in sids if s == session_id]
     sids = sorted(sids, key=activity, reverse=True)
+
+    # v0.7.0 — window totals: aggregate over ALL sessions in the window
+    # BEFORE the limit cut. `sessions[]` stays limited (display list);
+    # `totals` is the authoritative full-window sum, so client totals no
+    # longer shrink when new sessions push old ones past `limit`.
+    # Uses the SAME known_* counters that fill sessions[] — no second
+    # bookkeeping. Server stays price-free (cost is client-side via PRICES).
+    resp = {}
+    if totals and sids:
+        t_in = t_cached = t_out = t_calls = 0
+        per_model = {}  # (model, billing_provider) -> sums
+        per_task = {}   # task (!= '') -> sums  (aux breakdown only)
+        per_day = {}    # 'YYYY-MM-DD' from activity -> sums
+        for s in sids:
+            rs = by_sid[s]
+            s_in = sum(r["known_in"] for r in rs)
+            s_cached = sum(r["known_cached"] for r in rs)
+            s_out = sum(r["known_out"] for r in rs)
+            s_calls = sum(r["known_calls"] for r in rs)
+            t_in += s_in
+            t_cached += s_cached
+            t_out += s_out
+            t_calls += s_calls
+            m = meta.get(s, {})
+            for r in rs:
+                # billing_provider from the LEDGER grain row — grain-exact
+                # and correct even for ledger-only sessions (state.db meta
+                # would be None there). Matches the client's per-row pricing
+                # path over model_usage[].
+                bp = r["billing_provider"] or None
+                mk = (r["model"], bp)
+                e = per_model.setdefault(
+                    mk, {"model": r["model"],
+                         "billing_provider": bp,
+                         "input_tokens": 0, "cache_read_tokens": 0,
+                         "output_tokens": 0, "api_calls": 0, "sessions": set()})
+                e["input_tokens"] += r["known_in"]
+                e["cache_read_tokens"] += r["known_cached"]
+                e["output_tokens"] += r["known_out"]
+                e["api_calls"] += r["known_calls"]
+                e["sessions"].add(s)
+                if r["task"]:
+                    tk = r["task"]
+                    te = per_task.setdefault(
+                        tk, {"task": tk, "input_tokens": 0,
+                              "cache_read_tokens": 0, "output_tokens": 0,
+                              "api_calls": 0, "sessions": set()})
+                    te["input_tokens"] += r["known_in"]
+                    te["cache_read_tokens"] += r["known_cached"]
+                    te["output_tokens"] += r["known_out"]
+                    te["api_calls"] += r["known_calls"]
+                    te["sessions"].add(s)
+            day = _day_key(activity(s))
+            de = per_day.setdefault(
+                day, {"day": day, "input_tokens": 0,
+                      "cache_read_tokens": 0, "output_tokens": 0,
+                      "api_calls": 0, "sessions": set()})
+            de["input_tokens"] += s_in
+            de["cache_read_tokens"] += s_cached
+            de["output_tokens"] += s_out
+            de["api_calls"] += s_calls
+            de["sessions"].add(s)
+
+        def _ready(d):
+            out = dict(d)
+            out["sessions"] = len(out["sessions"])
+            return out
+
+        resp["totals"] = {
+            "sessions": len(sids),
+            "input_tokens": t_in,
+            "cache_read_tokens": t_cached,
+            "output_tokens": t_out,
+            "api_call_count": t_calls,
+            "by_model": [_ready(e) for e in per_model.values()],
+            "by_task": [_ready(e) for e in per_task.values()],
+            "by_day": [_ready(e) for e in per_day.values()],
+        }
     if not session_id:
         sids = sids[:limit]
 
@@ -245,7 +337,12 @@ async def ledger(days: int = 30, since: float = 0, until: float = 0,
                 "last_db_in": r["last_db_in"],
             })
 
-    return {"sessions": sessions, "model_usage": model_usage}
+    out: dict = {"sessions": sessions, "model_usage": model_usage}
+    # v0.7.0: totals ride along only when requested (totals=1) — old
+    # clients and focus-session queries keep the lean response shape.
+    if "totals" in resp:
+        out["totals"] = resp["totals"]
+    return out
 
 
 @router.get("/events")

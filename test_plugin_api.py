@@ -21,6 +21,14 @@ sys.path.insert(0, PKG)
 STATE_COPY = None
 
 
+def _day_key_for(ts):
+    """Same day-attribution as plugin_api._day_key (local timezone)."""
+    import datetime
+    return datetime.datetime.fromtimestamp(
+        ts, datetime.timezone.utc
+    ).astimezone().strftime("%Y-%m-%d")
+
+
 def fake_state_db(path):
     db = sqlite3.connect(path)
     db.executescript("""
@@ -87,6 +95,14 @@ class BackendEnv:
                  r.get("known_out", 0), r.get("known_calls", 0),
                  r.get("known_in", 0), r.get("known_in", 0),
                  r.get("first_seen", 1000.0), r.get("last_poll", 1000.0)))
+        # optional billing_provider per row (grain column, '' default)
+        for r in rows:
+            if r.get("billing_provider"):
+                db.execute(
+                    "UPDATE ledger_rows SET billing_provider = ? "
+                    "WHERE session_id = ? AND model = ? AND task = ?",
+                    (r["billing_provider"], r["sid"], r.get("model", "m"),
+                     r.get("task", "")))
         db.commit()
         db.close()
 
@@ -286,6 +302,108 @@ class TestPluginApi(unittest.TestCase):
         j = r.json()
         ids = {s["id"] for s in j["sessions"]}
         assert ids == {"new"}, ids
+
+    def test_ledger_totals_param(self):
+        # v0.7.0: totals=1 aggregates the FULL window server-side.
+        # s1 has state.db metadata (last_activity_at=1500), s2 is
+        # ledger-only (activity=first_seen=1000). Two grain rows for s1
+        # (main + aux task) must both count; by_model keys on
+        # (model, billing_provider); by_task carries aux rows ONLY.
+        self.env.seed([
+            {"sid": "s1", "model": "m1", "known_in": 100,
+             "known_cached": 50, "known_out": 20, "known_calls": 2,
+             "billing_provider": "custom"},
+            {"sid": "s1", "model": "m1", "task": "vision",
+             "known_in": 30, "known_out": 10},
+            {"sid": "s2", "model": "m2", "known_in": 500,
+             "known_cached": 40, "known_out": 60, "known_calls": 3,
+             "first_seen": 1000.0},
+        ])
+        r = self.client.get(
+            "/api/plugins/token-stats/ledger?days=0&totals=1&limit=10")
+        assert r.status_code == 200
+        t = r.json()["totals"]
+        assert t["sessions"] == 2
+        assert t["input_tokens"] == 630
+        assert t["cache_read_tokens"] == 90
+        assert t["output_tokens"] == 90
+        assert t["api_call_count"] == 5
+        bm = {(e["model"], e["billing_provider"]): e
+              for e in t["by_model"]}
+        # m1 splits per billing_provider: main row 'custom', aux (vision)
+        # row has none — grain-exact, same key as the client's per-row
+        # pricing over model_usage[].
+        assert bm[("m1", "custom")]["input_tokens"] == 100
+        assert bm[("m1", "custom")]["sessions"] == 1
+        assert bm[("m1", None)]["input_tokens"] == 30
+        assert bm[("m2", None)]["input_tokens"] == 500
+        assert bm[("m2", None)]["sessions"] == 1
+        bt = {e["task"]: e for e in t["by_task"]}
+        assert list(bt) == ["vision"]  # aux only, main task '' not listed
+        assert bt["vision"]["input_tokens"] == 30
+        bd = {e["day"]: e for e in t["by_day"]}
+        # activity: s1=1500 (state.db), s2=1000 (first_seen fallback) —
+        # same calendar day, so by_day merges both sessions into ONE
+        # bucket (same attribution the client histogram uses).
+        d1 = _day_key_for(1500.0)
+        assert list(bd) == [d1]
+        assert bd[d1]["input_tokens"] == 630 and bd[d1]["sessions"] == 2
+
+    def test_ledger_totals_unaffected_by_limit(self):
+        # The bug this fixes: /ledger sorts by activity and cuts at
+        # `limit` — client window totals silently shrank as new sessions
+        # pushed expensive old ones past the cut. With totals=1 the
+        # aggregation runs BEFORE the limit cut: identical totals for
+        # any limit, while sessions[] stays limited.
+        seed = [
+            {"sid": f"s{i}", "known_in": i, "known_cached": i * 10,
+             "known_out": i * 100, "known_calls": 1,
+             "first_seen": 1000.0 + i}
+            for i in range(1, 11)
+        ]
+        self.env.seed(seed)
+        t5 = self.client.get(
+            "/api/plugins/token-stats/ledger?days=0&totals=1&limit=5"
+        ).json()["totals"]
+        t50 = self.client.get(
+            "/api/plugins/token-stats/ledger?days=0&totals=1&limit=50"
+        ).json()["totals"]
+        assert t5 == t50, (t5, t50)
+        assert t5["sessions"] == 10
+        n = sum(range(1, 11))
+        assert t5["input_tokens"] == n
+        assert t5["output_tokens"] == 100 * n
+        # but sessions[] respects the limit
+        j5 = self.client.get(
+            "/api/plugins/token-stats/ledger?days=0&limit=5").json()
+        assert len(j5["sessions"]) == 5
+        assert "totals" not in j5  # no totals without the param
+        # window filter still applies to totals: since cuts old sessions.
+        # s1 (state.db session, activity=1500) + s5..s10 (first_seen
+        # 1005..1010) pass the since=1005 cut → 7 sessions.
+        t_win = self.client.get(
+            "/api/plugins/token-stats/ledger?days=0&totals=1"
+            "&since=1005&limit=50").json()["totals"]
+        assert t_win["sessions"] == 7
+
+    def test_ledger_totals_absent_without_param(self):
+        # Back-compat: default response has NO totals key.
+        self.env.seed([{"sid": "s1", "known_in": 100}])
+        j = self.client.get(
+            "/api/plugins/token-stats/ledger?days=0").json()
+        assert "totals" not in j
+
+    def test_ledger_totals_session_id_scope(self):
+        # Focus-session queries (chip): totals scope to that session.
+        self.env.seed([
+            {"sid": "s1", "known_in": 100},
+            {"sid": "s2", "known_in": 200},
+        ])
+        j = self.client.get(
+            "/api/plugins/token-stats/ledger?session_id=s2"
+            "&days=0&totals=1").json()
+        assert j["totals"]["sessions"] == 1
+        assert j["totals"]["input_tokens"] == 200
 
     def test_unknown_profile_404(self):
         r = self.client.get(
