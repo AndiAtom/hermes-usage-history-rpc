@@ -5,5 +5,5 @@
   "label": "Token Stats",
   "description": "Per-session/per-model token + cost stats over the known ledger (web companion to the desktop plugin).",
   "icon": "Puzzle",
-  "version": "5.2.0-web.1"
+  "version": "5.2.1-web.1"
 }

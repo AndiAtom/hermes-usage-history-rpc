@@ -2,7 +2,7 @@
  * Token Stats — Hermes Web-Dashboard plugin entry (companion to the
  * desktop plugin.js in AndiAtom/hermes-token-stats).
  *
- * @version v5.2.0-web.1
+ * @version v5.2.1-web.1
  *
  * Port of the desktop pane design to the web dashboard plugin SDK
  * (window.__HERMES_PLUGIN_SDK__ + window.__HERMES_PLUGINS__.register).
@@ -49,7 +49,7 @@
   const fetchJSON = SDK.fetchJSON
   const h = React.createElement
   const ID = 'token-stats'
-  const VERSION = 'v5.2.0-web.1'
+  const VERSION = 'v5.2.1-web.1'
 
   // ── Injected stylesheet (namespaced .ts-* classes) ─────────────────
   // Built on theme vars so the active dashboard theme flows through:
@@ -1507,7 +1507,7 @@
       const load = async () => {
         try {
           const res = await fetchJSON(
-            `/api/plugins/token-stats/ledger?since=${since}&until=${until}&days=0&limit=200&totals=1`)
+            `/api/plugins/token-stats/ledger?since=${since}&until=${until}&days=0&limit=2000&totals=1`)
           if (!dead) setState({ ok: true, res })
         } catch (e) {
           if (!dead) setState({ ok: false, error: String(e && e.message ? e.message : e) })
