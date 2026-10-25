@@ -56,7 +56,7 @@ Data sources: `sessions` (lifetime totals per session) + `session_model_usage`
 
 | Route | Parameters | Returns |
 |---|---|---|
-| `/api/plugins/token-stats/ledger` | `days`, `since` (inclusive), `until` (EXCLUSIVE upper bound, calendar windows), `limit`, `session_id`, `models`, `profile` | `sessions[]` + `model_usage[]` — shape-compatible with `usage.history` (known counters + state.db metadata, window/filter on real activity) |
+| `/api/plugins/token-stats/ledger` | `days`, `since` (inclusive), `until` (EXCLUSIVE upper bound, calendar windows), `limit`, `session_id`, `models`, `totals` (v0.7.0: `1` = full-window aggregation, limit-independent), `profile` | `sessions[]` + `model_usage[]` — shape-compatible with `usage.history` (known counters + state.db metadata, window/filter on real activity); with `totals=1` additionally `totals` `{sessions, input_tokens, cache_read_tokens, output_tokens, api_call_count, by_model[], by_task[] (aux only), by_day[]}` aggregated over the FULL window before the limit cut |
 | `/api/plugins/token-stats/events` | `session_id`, `limit`, `profile` | anomaly history (decrease/removed/reappeared) |
 | `/api/plugins/token-stats/profiles` | — | available ledger profiles |
 | `/api/plugins/token-stats/health` | `profile` | daemon liveness via heartbeat (`source: heartbeat`), rows, age; `last_poll` fallback for pre-v0.5.0 ledger DBs |
@@ -153,6 +153,25 @@ sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"   # same before/afte
 ```
 
 ## Roadmap
+
+**Shipped in v0.7.0 / v5.2.0-web.1** — **server-side window aggregation**
+on `/ledger` (`totals=1`), lockstep with the desktop plugin's v5.2.0:
+
+- The route now aggregates the FULL window server-side (before the
+  `limit` cut): `totals` `{sessions, input/cache_read/output tokens,
+  api_call_count, by_model[], by_task[] (aux only), by_day[]}`, built
+  from the same known counters that fill `sessions[]`
+- Fixes the client's shrinking window totals: the display list is
+  capped at `limit` (default 200) while the window is not — new sessions
+  pushing old ones out of the top-200 silently shrank the sums
+- `by_model` keys on `(model, billing_provider)` taken from the ledger
+  grain row (grain-exact, correct for ledger-only sessions);
+  `by_day` attributes per session on its activity day (same estimate
+  the client histogram uses); the server stays price-free
+- Without the param the response shape is unchanged (back-compat);
+  `session_id` queries scope `totals` to that session
+- Web entry (v5.2.0-web.1): summary totals + footer session count from
+  `res.totals`, new i18n key `windowSessions`
 
 **Shipped in v5.1.2-web.1** — **`zai-glm-5-3-flash` pricing** (Z.ai GLM
 5.3 Flash on La Plateforme, official listing: $0.15 input / $0.03 cached /
