@@ -159,6 +159,16 @@ without systemd degrade to `--no-daemon` instead of failing). Fatal items
 abort with the env knob that fixes them; `./install.sh --doctor` runs the
 check alone and exits.
 
+**Non-root installs** get a systemd **user unit** (`systemctl --user`) for
+the ledger daemon — no sudo needed, ledger DBs stay in the user's home and
+owned by the user (a root system unit would write to `/root/...` while the
+user-owned dashboard process reads `~/token-stats-ledger` — empty pane).
+User units bind to `default.target` and the installer enables **lingering**
+for headless hosts (survives logout). Running with sudo on a root-owned
+Hermes install keeps the system unit as before — the scope follows the
+invoking user. A stale root-era system unit next to a user install is
+detected and warned about.
+
 Flags: `--no-daemon` (plugin backend only), `--no-restart`, `--yes` /
 `ASSUME_YES=1` (non-interactive), `--doctor` (check environment only).
 Env overrides: `HERMES_LIB`, `HERMES_HOME`, `DASHBOARD_PORT`, `LEDGER_BASE`,
