@@ -239,7 +239,7 @@ if 'methods_usage_history as _methods_usage_history' not in src:
     # Import anchor: 'methods_connectors as _methods_connectors' plus the next
     # punctuation (comma, parenthesis, or newline) — covers single-line and
     # multi-line upstream imports.
-    m = re.search(r'methods_connectors as _methods_connectors([,\\)\\n])', src)
+    m = re.search(r'methods_connectors as _methods_connectors([,)\n])', src)
     if not m:
         sys.exit('server.py: anchor (methods_connectors import) not found — check the Hermes version!')
     tok = m.group(1)
@@ -249,7 +249,7 @@ if 'methods_usage_history as _methods_usage_history' not in src:
     elif tok == ',':
         repl = 'methods_connectors as _methods_connectors, ' + add + ','
     else:  # Newline — add the module as its own line in the multi-line import
-        repl = 'methods_connectors as _methods_connectors,\\n    ' + add + '\\n'
+        repl = 'methods_connectors as _methods_connectors,\n    ' + add + '\n'
     src = src[:m.start()] + repl + src[m.end():]
     changed = True
 
@@ -260,11 +260,19 @@ fm = src.find('for _m in (')
 if fm == -1:
     sys.exit('server.py: register anchor (for _m in) not found — check the Hermes version!')
 if not re.search(r'for _m in \([^)]*_methods_usage_history', src, re.S):
+    # comma-aware insert (v0.6.3): upstream tuples may end in ',)' (trailing
+    # comma, installer layout) — a blind ',' would produce ',,)' (syntax error).
     close = src.find('):', fm)
     if close == -1:
         sys.exit('server.py: register anchor: closing parenthesis not found')
-    src = src[:close] + ',\\n    _methods_usage_history' + src[close:]
+    prev = src[fm:close].rstrip()[-1]
+    if prev in (',', '('):
+        # trailing comma already present (or empty tuple) — no extra comma
+        src = src[:close] + '\n    _methods_usage_history' + src[close:]
+    else:
+        src = src[:close] + ',\n    _methods_usage_history' + src[close:]
     changed = True
+
 
 if changed:
     open(p, 'w').write(src)
