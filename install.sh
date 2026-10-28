@@ -469,9 +469,14 @@ if [ "$DO_DAEMON" = "1" ]; then
   # the user could not write. User units need lingering enabled for
   # headless hosts (survive logout); warned about below.
   write_unit() {
+    # User units boot via default.target (multi-user.target does not exist
+    # in the user manager — enable would link a dead target and the daemon
+    # would not autostart at next login).
+    if [ "$(id -u)" = "0" ]; then WANT="multi-user.target"; else WANT="default.target"; fi
     sed -e "s|ExecStart=.*|ExecStart=$PY -m ledger.daemon|" \
         -e "s|WorkingDirectory=.*|WorkingDirectory=$HERE|" \
         -e "s|Environment=PYTHONPATH=.*|Environment=PYTHONPATH=$HERE|" \
+        -e "s|^WantedBy=.*|WantedBy=$WANT|" \
         "$UNIT_SRC"
   }
   if [ "$(id -u)" = "0" ]; then
