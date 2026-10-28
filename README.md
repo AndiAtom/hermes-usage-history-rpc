@@ -190,6 +190,29 @@ sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"   # same before/afte
 
 ## Roadmap
 
+**Shipped in v0.7.3** — **curl | bash one-liner install + preflight/doctor**
+(installer only — ledger daemon, routes and web entry unchanged):
+
+- `curl -fsSL .../install.sh | bash -s -- --yes` now works out of the box:
+  a piped installer detects the missing `BASH_SOURCE`, clones the repo to a
+  persistent location (`~/.hermes-usage-history-rpc`, override via
+  `INSTALL_DIR`/`REPO_URL` — persistent because the daemon unit templates
+  `WorkingDirectory=` to the repo), then re-execs itself from there with all
+  flags preserved. Re-runs of the one-liner `git pull` the clone first.
+- **Preflight before any file is touched**: Hermes install root (git/venv +
+  installer layouts auto-detected), `config.yaml` presence/writability,
+  Python prerequisites (`sqlite3` fatal, `fastapi` warn,
+  `ruamel.yaml` optional — its validation downgrades to a warning instead
+  of aborting), a **dry-run of both `server.py` patch anchors** (missing
+  anchors abort BEFORE anything is written), and systemd detection
+  (containers degrade to `--no-daemon` instead of failing).
+- New `--doctor` flag: run the environment check alone and exit — handy to
+  vet a host before installing (fleet use).
+- Verified: piped install against a simulated installer-layout host
+  (multiline import + trailing-comma tuple + foreign python) — hooks apply
+  cleanly and idempotently; failure paths abort with the env knob that
+  fixes them.
+
 **Shipped in v0.7.1 / v5.2.1-web.1** — **display limit raised 200 → 2000**
 in the web entry, lockstep with the desktop plugin's v5.2.1: the
 activity-sorted top-200 cut fell *inside* a busy month window and hid
