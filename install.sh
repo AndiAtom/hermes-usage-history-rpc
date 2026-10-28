@@ -164,6 +164,14 @@ fi
 
 # (4) server.py + patch anchors (hard requirement — this is what gets patched)
 if [ -f "$TG/server.py" ]; then
+  # Writability: the hooks patch server.py + drop methods_usage_history.py
+  # into $TG — on hosts with a ROOT-owned Hermes install a non-root user
+  # cannot write there; fail HERE, not midway through the install.
+  if [ -w "$TG" ] && { [ ! -f "$TG/methods_usage_history.py" ] || [ -w "$TG/methods_usage_history.py" ]; }; then
+    WT=1
+  else
+    WT=0
+  fi
   ANCHOR_ERR="$(PYCHECK - "$TG/server.py" <<'ANCHOREOF'
 import re, sys
 src = open(sys.argv[1]).read()
@@ -175,8 +183,10 @@ ANCHOREOF
 )"
   if [ -n "$ANCHOR_ERR" ]; then
     bad "server.py found but $ANCHOR_ERR — Hermes version unknown to this installer; hooks will NOT be applied"
+  elif [ "$WT" = "1" ]; then
+    pass "server.py patch anchors present, $TG writable — RPC hooks can be applied"
   else
-    pass "server.py patch anchors present (import + register) — RPC hooks can be applied"
+    bad "$TG is not writable by $(id -un) — the Hermes install is root-owned. Re-run with sudo (or as root) for the gateway hooks."
   fi
 else
   bad "server.py not found at $TG/server.py (set HERMES_LIB to the Hermes install root)"
@@ -184,10 +194,35 @@ fi
 
 # (5) systemd (daemon setup); degraded mode without it
 if [ "$DO_DAEMON" = "1" ]; then
-  if command -v systemctl >/dev/null 2>&1 && systemctl list-units >/dev/null 2>&1; then
-    pass "systemd available (ledger daemon as unit token-stats-ledger.service)"
+  LEDGER_BASE_PF="${LEDGER_BASE:-$HOME/token-stats-ledger}"
+  if ! mkdir -p "$LEDGER_BASE_PF" 2>/dev/null; then
+    bad "cannot create the ledger base directory $LEDGER_BASE_PF (set LEDGER_BASE to a writable path)"
+  elif touch "$LEDGER_BASE_PF/.ts-write-probe" 2>/dev/null; then
+    rm -f "$LEDGER_BASE_PF/.ts-write-probe"
+    pass "ledger base writable: $LEDGER_BASE_PF"
   else
-    skp "systemd not usable (container?) — running in degraded mode: --no-daemon, poll the ledger manually via '$PY -m ledger.daemon' in a loop"
+    bad "ledger base not writable: $LEDGER_BASE_PF — daemon cannot create its DBs (permissions? set LEDGER_BASE)"
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    if [ "$(id -u)" = "0" ]; then
+      if systemctl list-units >/dev/null 2>&1; then
+        pass "systemd available (ledger daemon as SYSTEM unit token-stats-ledger.service)"
+      else
+        skp "systemctl not usable here — running in degraded mode: --no-daemon, poll the ledger manually via '$PY -m ledger.daemon' in a loop"
+        DO_DAEMON=0
+      fi
+    else
+      # Non-root: USER unit (systemd --user). Requires a user session
+      # (XDG_RUNTIME_DIR / dbus) — absent on headless SSH into fresh systems.
+      if systemctl --user list-units >/dev/null 2>&1; then
+        pass "systemd user manager available (ledger daemon as USER unit, no sudo needed)"
+      else
+        skp "systemd --user not usable (no user session / XDG_RUNTIME_DIR) — degraded mode: --no-daemon. Fix: log in properly (not 'sudo su'), or run the daemon via tmux: $PY -m ledger.daemon"
+        DO_DAEMON=0
+      fi
+    fi
+  else
+    skp "systemctl not found — degraded mode: --no-daemon, poll the ledger manually via '$PY -m ledger.daemon' in a loop"
     DO_DAEMON=0
   fi
 fi
@@ -418,38 +453,68 @@ if [ "$DO_DAEMON" = "1" ]; then
   mkdir -p "$LEDGER_BASE"
 
   UNIT_SRC="$HERE/ledger/token-stats-ledger.service"
-  UNIT_DST="/etc/systemd/system/token-stats-ledger.service"
   # Template the unit: python + repo dir are host-specific and systemd does
   # no ~/$HOME expansion in ExecStart/WorkingDirectory. The sed patterns
   # anchor on the three known keys of the shipped unit file (ExecStart=,
   # WorkingDirectory=, Environment=PYTHONPATH=) — full-line replacement,
   # so paths containing spaces would still land correctly.
-  NEED_SUDO=0
-  if [ -f "$UNIT_DST" ] && [ -w "$UNIT_DST" ]; then :; else NEED_SUDO=1; fi
+  # Ledger paths do NOT need templating: daemon and plugin backend both
+  # resolve ~/token-stats-ledger at runtime in their own process — they
+  # agree as long as both run as the SAME user (root system unit / root
+  # dashboard, or user unit / user dashboard).
+  # Unit scope follows the invoking user: a non-root user gets a USER unit
+  # (systemd --user) — running a root system unit would write the ledger
+  # to /root/token-stats-ledger while the user-owned dashboard process
+  # reads ~/token-stats-ledger → empty pane, plus root-owned WAL/shm files
+  # the user could not write. User units need lingering enabled for
+  # headless hosts (survive logout); warned about below.
   write_unit() {
     sed -e "s|ExecStart=.*|ExecStart=$PY -m ledger.daemon|" \
         -e "s|WorkingDirectory=.*|WorkingDirectory=$HERE|" \
         -e "s|Environment=PYTHONPATH=.*|Environment=PYTHONPATH=$HERE|" \
         "$UNIT_SRC"
   }
-  if [ "$NEED_SUDO" = "1" ]; then
-    if command -v sudo >/dev/null 2>&1; then
-      write_unit | sudo tee "$UNIT_DST" >/dev/null
-    elif [ "$(id -u)" = "0" ]; then
+  if [ "$(id -u)" = "0" ]; then
+    UNIT_DST="/etc/systemd/system/token-stats-ledger.service"
+    if [ -f "$UNIT_DST" ] && [ -w "$UNIT_DST" ]; then
       write_unit > "$UNIT_DST"
+    elif command -v sudo >/dev/null 2>&1; then
+      write_unit | sudo tee "$UNIT_DST" >/dev/null
     else
-      die "cannot write $UNIT_DST (need root; run with sudo or as root)"
+      write_unit > "$UNIT_DST"
     fi
+    systemctl daemon-reload
+    systemctl enable --now token-stats-ledger.service
   else
+    # Non-root: USER unit — no sudo needed, no root-owned ledger files.
+    # Old system-unit installs (root-era) must not shadow the user unit.
+    if [ -f /etc/systemd/system/token-stats-ledger.service ]; then
+      warn "found a ROOT system unit /etc/systemd/system/token-stats-ledger.service from an earlier root install — it writes the ledger to /root/... while your dashboard reads ~/token-stats-ledger. Stop/disable it as root if this host was previously installed as root."
+    fi
+    UNIT_DST="$HOME/.config/systemd/user/token-stats-ledger.service"
+    mkdir -p "$HOME/.config/systemd/user"
     write_unit > "$UNIT_DST"
+    systemctl --user daemon-reload
+    systemctl --user enable --now token-stats-ledger.service
+    # Headless hosts: user units die at logout unless lingering is enabled.
+    if ! loginctl show-user "$USER" 2>/dev/null | grep -q '^Linger=yes'; then
+      if loginctl enable-linger "$USER" 2>/dev/null; then
+        say "enabled lingering for user $USER (user unit survives logout on headless hosts)"
+      else
+        warn "could not enable lingering for $USER — the daemon stops when you log out. Fix: sudo loginctl enable-linger $USER"
+      fi
+    fi
   fi
-  systemctl daemon-reload
-  systemctl enable --now token-stats-ledger.service
   sleep 2
-  if systemctl is-active --quiet token-stats-ledger.service; then
-    say "ledger daemon active (unit templated: python=$PY, repo=$HERE)"
+  if [ "$(id -u)" = "0" ]; then
+    ACTIVE=0; systemctl is-active --quiet token-stats-ledger.service && ACTIVE=1
   else
-    warn "ledger daemon did not come up — check: journalctl -u token-stats-ledger -n 30"
+    ACTIVE=0; systemctl --user is-active --quiet token-stats-ledger.service && ACTIVE=1
+  fi
+  if [ "$ACTIVE" = "1" ]; then
+    say "ledger daemon active (unit templated: python=$PY, repo=$HERE, scope=$( [ "$(id -u)" = "0" ] && echo system || echo user))"
+  else
+    warn "ledger daemon did not come up — check: journalctl $( [ "$(id -u)" = "0" ] || echo '--user') -u token-stats-ledger -n 30"
   fi
 fi
 
@@ -505,11 +570,16 @@ case "$CODE" in
   *)   warn "smoke: unexpected status $CODE — check the dashboard log" ;;
 esac
 
-cat <<'EOF'
+if [ "$(id -u)" = "0" ]; then
+  STAT_CMD="systemctl status token-stats-ledger"
+else
+  STAT_CMD="systemctl --user status token-stats-ledger"
+fi
+cat <<EOF
 
 Done. What to check next:
   • Web dashboard:  open http://<host>:9119/token-stats  (hard-reload if open) — Token Stats tab in the sidebar
   • Desktop plugin: reload via ⌘K → "Reload desktop plugins" (companion repo AndiAtom/hermes-token-stats)
-  • Daemon:         systemctl status token-stats-ledger
+  • Daemon:         $STAT_CMD
   • After a Hermes update the server.py hooks get wiped — re-run this script (idempotent).
 EOF
