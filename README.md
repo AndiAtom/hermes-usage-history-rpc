@@ -306,6 +306,25 @@ via `localStorage` (`token-stats:lang` / `token-stats:currency`) — same
 keys as the desktop. Since web.2 the histogram's cost-metric toggle icon
 follows the active currency (€/$) instead of a hardcoded €.
 
+**macOS (planned — once I get my hands on a Mac)** — the ledger core
+(`ledger/engine.py`, `poller.py`, `daemon.py`) is pure Python stdlib and
+should run on Darwin as-is; the porting work is all around it:
+
+- CI: run the ledger unit tests on a `macos-latest` GitHub Actions runner
+  (free for public repos) to verify the delta engine on Darwin — no
+  hardware needed for this step
+- `install.sh` uses GNU-only tooling (`grep -P`, `stat -c`, `ss`, some
+  `sed`-isms) that needs BSD equivalents
+- no systemd on macOS: the daemon needs a launchd plist + `launchctl`
+  setup (the `--no-daemon` degradation would already run cleanly today)
+- Hermes macOS install layout + `server.py` anchors need live
+  verification on real hardware
+
+Blocked on: a decommissioned M1 Mac mini (Intel Macs are unsupported by
+Hermes itself). If you are a macOS user: run
+`curl -fsSL .../install.sh | bash -s -- --doctor` and open an issue with
+the output — that tells us everything we need without the hardware.
+
 **v0.7 (planned)** — LiteLLM consumer tracking (companion to the desktop
 plugin's v6.0.0):
 
