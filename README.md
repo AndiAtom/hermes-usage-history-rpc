@@ -199,6 +199,12 @@ on `/ledger` (`totals=1`), lockstep with the desktop plugin's v5.2.0:
 - Web entry (v5.2.0-web.1): summary totals + footer session count from
   `res.totals`, new i18n key `windowSessions`
 
+**Shipped in v5.2.2-web.1** — **`deepseek-v4-1-flash-1017` pricing** (DeepSeek
+V4.1 Flash 1017, now hosted on La Plateforme; official listing: $0.30 input /
+$0.007 cached / $1.20 output per 1M tokens), lockstep with the desktop
+plugin's v5.2.2. Backend (ledger daemon, routes) unchanged — only
+`dashboard/web-entry.js` and `manifest.json` changed.
+
 **Shipped in v5.1.2-web.1** — **`zai-glm-5-3-flash` pricing** (Z.ai GLM
 5.3 Flash on La Plateforme, official listing: $0.15 input / $0.03 cached /
 $0.50 output per 1M tokens), lockstep with the desktop plugin's v5.1.2.
