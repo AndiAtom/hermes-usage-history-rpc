@@ -200,6 +200,31 @@ sqlite3 ~/.hermes/state.db "SELECT count(*) FROM sessions;"   # same before/afte
 
 ## Roadmap
 
+**Shipped in v0.7.4** — **non-root installs** (installer only — ledger
+daemon, routes and web entry unchanged):
+
+- The ledger daemon now installs as a **systemd user unit**
+  (`systemctl --user`) when the installer runs as a non-root user — no sudo
+  needed, ledger DBs stay in the user's home and owned by the user. A root
+  system unit would silently write the ledger to `/root/token-stats-ledger`
+  while the user-owned dashboard process reads `~/token-stats-ledger` —
+  empty pane, plus root-owned WAL/shm files the user cannot write. The unit
+  scope follows the invoking user; root installs keep the system unit.
+- User units bind to `default.target` (`multi-user.target` does not exist
+  in the user manager — the enabled symlink would point at a dead target
+  and the daemon would not autostart at next login). **Lingering** is
+  enabled automatically so the unit survives logout on headless hosts;
+  a stale root-era system unit next to a user install is detected and
+  warned about.
+- Preflight hardened: `tui_gateway` writability (a root-owned Hermes
+  install + non-root user fails FAST with "re-run with sudo" instead of
+  dying midway through step 3), ledger base writability probe, and user
+  manager availability (missing XDG session degrades to `--no-daemon`
+  with fix hints instead of failing).
+- Verified with a real non-root user: piped one-liner install into a
+  user-owned installer layout — unit enabled in `default.target.wants`,
+  active, lingering on, hooks applied; root-path regression unchanged.
+
 **Shipped in v0.7.3** — **curl | bash one-liner install + preflight/doctor**
 (installer only — ledger daemon, routes and web entry unchanged):
 
