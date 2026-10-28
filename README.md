@@ -325,20 +325,6 @@ Hermes itself). If you are a macOS user: run
 `curl -fsSL .../install.sh | bash -s -- --doctor` and open an issue with
 the output — that tells us everything we need without the hardware.
 
-**v0.7 (planned)** — LiteLLM consumer tracking (companion to the desktop
-plugin's v6.0.0):
-
-- New read-only routes that query a self-hosted
-  [LiteLLM](https://github.com/BerriAI/litellm) proxy's Postgres spend
-  logs (`LiteLLM_SpendLogs`) and aggregate tokens + cost per consumer
-  team (e.g. Honcho, Hindsight — services that call models outside
-  Hermes)
-- **Graceful no-op without LiteLLM**: the routes detect an
-  unconfigured/absent proxy and report empty — the existing ledger
-  (state.db daemon) is untouched. Installations without external AI
-  stacks need nothing; Hermes usage keeps flowing through state.db as
-  before
-
 ## Context
 
 - Companion to the **[token-stats desktop plugin](https://github.com/AndiAtom/hermes-token-stats)**
