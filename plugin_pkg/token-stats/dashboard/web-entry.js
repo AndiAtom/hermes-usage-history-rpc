@@ -2,7 +2,7 @@
  * Token Stats — Hermes Web-Dashboard plugin entry (companion to the
  * desktop plugin.js in AndiAtom/hermes-token-stats).
  *
- * @version v5.2.1-web.1
+ * @version v5.2.2-web.1
  *
  * Port of the desktop pane design to the web dashboard plugin SDK
  * (window.__HERMES_PLUGIN_SDK__ + window.__HERMES_PLUGINS__.register).
@@ -49,7 +49,7 @@
   const fetchJSON = SDK.fetchJSON
   const h = React.createElement
   const ID = 'token-stats'
-  const VERSION = 'v5.2.1-web.1'
+  const VERSION = 'v5.2.2-web.1'
 
   // ── Injected stylesheet (namespaced .ts-* classes) ─────────────────
   // Built on theme vars so the active dashboard theme flows through:
@@ -219,6 +219,7 @@
     'zai-glm-5-2': { input: 1.40, cached: 0.14, output: 4.40 },
     'zai-glm-5': { input: 1.40, cached: 0.14, output: 4.40 },      // API alias, same listing
     'zai-glm-5-3-flash': { input: 0.15, cached: 0.03, output: 0.50 },  // Z.ai GLM 5.3 Flash, official listing 24.10.2026
+    'deepseek-v4-1-flash-1017': { input: 0.30, cached: 0.007, output: 1.20 },  // DeepSeek V4.1 Flash 1017, official listing 28.10.2026 (Public Preview, regular list price — no sale)
     'glm-5-2': { input: 1.40, cached: 0.14, output: 4.40 },
     // Nous Inference API (inference-api.nousresearch.com) serves OpenRouter-style
     // model IDs. Andi decision 2026-09-30: price with MISTRAL's own list prices,
