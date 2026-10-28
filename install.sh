@@ -20,14 +20,42 @@
 # python (venv shim → tools python) and only VERIFIES importability instead
 # of pip-installing anything — nothing outside Hermes itself is needed.
 #
+# One-liner (detects the pipe, clones the repo first, then re-execs itself):
+#   curl -fsSL https://raw.githubusercontent.com/AndiAtom/hermes-usage-history-rpc/main/install.sh | bash -s -- --yes
+#
 # Flags / env:
 #   --no-daemon      skip the ledger daemon setup (plugin backend only)
 #   --no-restart     do not restart the dashboard (you do it yourself)
 #   --yes | ASSUME_YES=1   non-interactive (default answer yes)
+#   --doctor         check the environment (paths, python prereqs, patch
+#                    anchors, systemd) and exit — install nothing
 #   HERMES_LIB       Hermes install root   (default /usr/local/lib/hermes-agent)
 #   HERMES_HOME      Hermes home            (default ~/.hermes)
 #   DASHBOARD_PORT   dashboard port        (default 9119)
+#   INSTALL_DIR      curl-mode clone target (default ~/.hermes-usage-history-rpc)
+#   REPO_URL         curl-mode clone source (default this repo on GitHub)
 set -euo pipefail
+
+# ── curl | bash bootstrap ─────────────────────────────────────────────
+# When this script is piped in (curl ... | bash), BASH_SOURCE is unset and
+# the repo payload (plugin_pkg/, ledger/, tui_gateway/) is not on disk. In
+# that case: clone the repo to a PERSISTENT location (the ledger daemon unit
+# templates WorkingDirectory= to the repo — a temp clone would break it),
+# then re-exec the installer from there with all flags preserved.
+if [ -z "${BASH_SOURCE[0]:-}" ]; then
+  REPO_URL="${REPO_URL:-https://github.com/AndiAtom/hermes-usage-history-rpc.git}"
+  INSTALL_DIR="${INSTALL_DIR:-$HOME/.hermes-usage-history-rpc}"
+  printf '\033[1;34m[..]\033[0m %s\n' "piped installer: cloning/updating $INSTALL_DIR from $REPO_URL"
+  command -v git >/dev/null 2>&1 \
+    || { printf '\033[1;31m[ERROR]\033[0m %s\n' "git not found — required for the curl install" >&2; exit 1; }
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    git -C "$INSTALL_DIR" pull --ff-only \
+      || printf '\033[1;33m[!!]\033[0m %s\n' "git pull failed — continuing with the existing checkout"
+  else
+    git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
+  fi
+  exec bash "$INSTALL_DIR/install.sh" "$@"
+fi
 
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 HERMES_LIB="${HERMES_LIB:-/usr/local/lib/hermes-agent}"
@@ -58,11 +86,13 @@ fi
 
 DO_DAEMON=1
 DO_RESTART=1
+DOCTOR=0
 for arg in "$@"; do
   case "$arg" in
     --no-daemon) DO_DAEMON=0 ;;
     --no-restart) DO_RESTART=0 ;;
     --yes) ASSUME_YES=1 ;;
+    --doctor) DOCTOR=1 ;;
     *) echo "[error] unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
@@ -71,15 +101,110 @@ say()  { printf '\033[1;32m[ok]\033[0m  %s\n' "$*"; }
 info() { printf '\033[1;34m[..]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!!]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
+# Preflight probes (anchor dry-check) must not abort under set -e.
+PYCHECK() { "$PY" "$@" 2>/dev/null || true; }
 
 # ── Preflight ────────────────────────────────────────────────────────
-[ -d "$HERMES_LIB" ]   || die "Hermes install not found at $HERMES_LIB (set HERMES_LIB)"
-[ -x "$PY" ]           || die "Hermes python not found at $PY"
-[ -d "$HERMES_HOME" ]  || die "Hermes home not found at $HERMES_HOME (set HERMES_HOME)"
-command -v ss >/dev/null 2>&1 || warn "ss not found — dashboard restart falls back to systemctl only"
+# Fail-fast environment check. Everything the later steps touch is verified
+# HERE, before a single file is copied or patched — and every failure message
+# names the env knob that fixes it. P=pass, W=warning, F=fatal.
+CONFIG="$HERMES_HOME/config.yaml"
+echo "── preflight ─────────────────────────────────────────────"
+P=0; W=0; F=0
+pass() { printf '  [P] %s\n' "$*"; P=$((P+1)); }
+skp() { printf '  [W] %s\n' "$*"; W=$((W+1)); }
+bad() { printf '  [F] %s\n' "$*"; F=$((F+1)); }
 
-"$PY" -c "import sqlite3"              || die "python at $PY cannot import sqlite3 (broken Hermes venv?)"
-"$PY" -c "import fastapi" 2>/dev/null  || warn "python at $PY cannot import fastapi — the plugin backend routes will NOT load. Fastapi ships WITH Hermes normally; check your installation."
+# (1) Hermes install root (git layout, /usr/local, or installer layout)
+if [ -d "$HERMES_LIB" ]; then
+  pass "Hermes install: $HERMES_LIB ($( [ -x "$HERMES_LIB/venv/bin/python" ] && echo 'git/venv layout' || echo 'installer layout, bundled tools python'))"
+else
+  bad "Hermes install not found at $HERMES_LIB (set HERMES_LIB; installer layouts live in \$HERMES_HOME/hermes-agent)"
+fi
+
+# (2) Hermes home + config
+if [ -d "$HERMES_HOME" ]; then
+  pass "Hermes home: $HERMES_HOME"
+else
+  bad "Hermes home not found at $HERMES_HOME (set HERMES_HOME)"
+fi
+if [ -f "$CONFIG" ]; then
+  if [ -w "$CONFIG" ]; then
+    pass "config.yaml present and writable: $CONFIG"
+  else
+    bad "config.yaml not writable: $CONFIG (run as the Hermes user or with sudo)"
+  fi
+else
+  bad "config not found: $CONFIG (set HERMES_HOME)"
+fi
+
+# (3) Python + prerequisites
+if [ -x "$PY" ]; then
+  pass "python: $PY"
+else
+  bad "Hermes python not found at $PY (broken Hermes install? set HERMES_LIB)"
+fi
+if [ -x "$PY" ] && "$PY" -c "import sqlite3" 2>/dev/null; then
+  pass "python can import sqlite3 (ledger daemon requirement)"
+else
+  bad "python at $PY cannot import sqlite3 — ledger daemon will not run (broken Hermes python?)"
+fi
+if [ -x "$PY" ] && "$PY" -c "import fastapi" 2>/dev/null; then
+  pass "python can import fastapi (plugin backend requirement)"
+else
+  skp "python at $PY cannot import fastapi — plugin backend routes will NOT load. Fastapi ships WITH Hermes normally; check your installation."
+fi
+if [ -x "$PY" ] && "$PY" -c "from ruamel.yaml import YAML" 2>/dev/null; then
+  RUAMEL_OK=1
+  pass "python can import ruamel.yaml (config.yaml validation)"
+else
+  RUAMEL_OK=0
+  skp "python at $PY cannot import ruamel.yaml — config.yaml edit will skip the YAML parse validation"
+fi
+
+# (4) server.py + patch anchors (hard requirement — this is what gets patched)
+if [ -f "$TG/server.py" ]; then
+  ANCHOR_ERR="$(PYCHECK - "$TG/server.py" <<'ANCHOREOF'
+import re, sys
+src = open(sys.argv[1]).read()
+if not re.search(r'methods_connectors as _methods_connectors([,)\n])', src):
+    print("import anchor (methods_connectors) missing")
+if src.find('for _m in (') == -1:
+    print("register anchor (for _m in) missing")
+ANCHOREOF
+)"
+  if [ -n "$ANCHOR_ERR" ]; then
+    bad "server.py found but $ANCHOR_ERR — Hermes version unknown to this installer; hooks will NOT be applied"
+  else
+    pass "server.py patch anchors present (import + register) — RPC hooks can be applied"
+  fi
+else
+  bad "server.py not found at $TG/server.py (set HERMES_LIB to the Hermes install root)"
+fi
+
+# (5) systemd (daemon setup); degraded mode without it
+if [ "$DO_DAEMON" = "1" ]; then
+  if command -v systemctl >/dev/null 2>&1 && systemctl list-units >/dev/null 2>&1; then
+    pass "systemd available (ledger daemon as unit token-stats-ledger.service)"
+  else
+    skp "systemd not usable (container?) — running in degraded mode: --no-daemon, poll the ledger manually via '$PY -m ledger.daemon' in a loop"
+    DO_DAEMON=0
+  fi
+fi
+command -v ss >/dev/null 2>&1 || skp "ss not found — dashboard restart falls back to systemctl only"
+
+echo "  ── $P passed, $W warnings, $F fatal"
+if [ "$F" -gt 0 ]; then
+  die "preflight failed — fix the [F] items above (fatal), then re-run"
+fi
+if [ "$DOCTOR" = "1" ]; then
+  if [ "$W" -gt 0 ]; then
+    warn "doctor: $W warning(s) — see [W] items above; install would continue with degraded features"
+  else
+    say "doctor: environment fully ready for install"
+  fi
+  exit 0
+fi
 
 # ── 1. Plugin package (backend + web dashboard entry) ────────────────
 mkdir -p "$HERMES_HOME/plugins/token-stats"
@@ -104,8 +229,6 @@ fi
 # endings, and REFUSES unrecognized layouts loudly instead of guessing —
 # the ruamel validation afterwards is the hard guarantee that nothing
 # broken ever reaches the config.
-CONFIG="$HERMES_HOME/config.yaml"
-[ -f "$CONFIG" ] || die "config not found: $CONFIG"
 if grep -qE '^\s*-\s*["'"'"']?token-stats["'"'"']?\s*$' "$CONFIG"; then
   say "plugins.enabled already contains token-stats"
 else
@@ -217,9 +340,14 @@ open(path, "w", newline="").writelines(out)
 print("[ok] plugins section appended (backup: config.yaml.bak-token-stats)")
 PYEOF
   "$PY" "$TMP" "$CONFIG"
-  # Validate the result parses as YAML using Hermes' own ruamel.
-  "$PY" -c "from ruamel.yaml import YAML; d = YAML().load(open('$CONFIG')); assert 'token-stats' in d['plugins']['enabled'], 'entry missing after edit'; print('[ok] config.yaml parses, token-stats enabled')" \
-    || die "config.yaml edit failed validation — restore from $CONFIG.bak-token-stats"
+  # Validate the result parses as YAML using Hermes' own ruamel — skipped
+  # with a warning when ruamel is unavailable (foreign python layouts).
+  if [ "${RUAMEL_OK:-0}" = "1" ]; then
+    "$PY" -c "from ruamel.yaml import YAML; d = YAML().load(open('$CONFIG')); assert 'token-stats' in d['plugins']['enabled'], 'entry missing after edit'; print('[ok] config.yaml parses, token-stats enabled')" \
+      || die "config.yaml edit failed validation — restore from $CONFIG.bak-token-stats"
+  else
+    warn "ruamel unavailable — skipped the config.yaml parse validation (insert was surgical; verify by hand if unsure)"
+  fi
 fi
 
 # ── 3. Legacy gateway RPCs (usage.history / usage.totals) ─────────────

@@ -132,6 +132,10 @@ install.sh                             # Idempotent installer (module copy + ser
 ## Install / re-install after a Hermes update
 
 ```bash
+# One-liner (clones the repo to ~/.hermes-usage-history-rpc, then installs):
+curl -fsSL https://raw.githubusercontent.com/AndiAtom/hermes-usage-history-rpc/main/install.sh | bash -s -- --yes
+
+# Or from a checkout / re-run after a Hermes update:
 ./install.sh
 ```
 
@@ -143,9 +147,22 @@ hooks, or after a `git pull`). No third-party dependencies — the ledger
 daemon is pure stdlib, fastapi/ruamel come with the Hermes runtime, and the
 installer only verifies their importability.
 
+Before touching anything, the installer runs a **preflight** that checks
+every path and prerequisite it will need: Hermes install root (git/venv and
+installer layouts are auto-detected), `config.yaml` presence and
+writability, the Python prerequisites (`sqlite3` for the daemon, `fastapi`
+for the plugin backend, `ruamel.yaml` for the config validation — a missing
+ruamel only downgrades that validation, it doesn't abort), the **patch
+anchors in `server.py`** (dry-run — if the anchors are missing, the
+installer refuses before writing a single byte), and systemd (containers
+without systemd degrade to `--no-daemon` instead of failing). Fatal items
+abort with the env knob that fixes them; `./install.sh --doctor` runs the
+check alone and exits.
+
 Flags: `--no-daemon` (plugin backend only), `--no-restart`, `--yes` /
-`ASSUME_YES=1` (non-interactive). Env overrides: `HERMES_LIB`,
-`HERMES_HOME`, `DASHBOARD_PORT`, `LEDGER_BASE`.
+`ASSUME_YES=1` (non-interactive), `--doctor` (check environment only).
+Env overrides: `HERMES_LIB`, `HERMES_HOME`, `DASHBOARD_PORT`, `LEDGER_BASE`,
+`INSTALL_DIR` + `REPO_URL` (curl-mode clone location/source).
 
 The server.py patch step is anchored on the `methods_connectors` import —
 if upstream ever restructures that import list, the installer fails loudly
