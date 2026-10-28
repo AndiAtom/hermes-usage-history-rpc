@@ -29,12 +29,32 @@
 #   DASHBOARD_PORT   dashboard port        (default 9119)
 set -euo pipefail
 
-HERMES_LIB="${HERMES_LIB:-/usr/local/lib/hermes-agent}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+HERMES_LIB="${HERMES_LIB:-/usr/local/lib/hermes-agent}"
+# Installer layouts (curl installer) keep the checkout in $HERMES_HOME/hermes-agent
+# with NO /usr/local install — auto-detect that layout instead of dying in preflight.
+if [ ! -d "$HERMES_LIB" ] && [ -d "$HERMES_HOME/hermes-agent" ]; then
+  HERMES_LIB="$HERMES_HOME/hermes-agent"
+fi
 DASHBOARD_PORT="${DASHBOARD_PORT:-9119}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TG="$HERMES_LIB/tui_gateway"
-PY="$HERMES_LIB/venv/bin/python"
+# Python resolution, layout-aware:
+#   git installs  → $HERMES_LIB/venv/bin/python (deps bundled)
+#   installer     → bundled tools python (deps live in the uv cache, same as the
+#                   gateway runtime, which runs the same interpreter with -I and
+#                   the archive on sys.path). PYTHONPATH is extended so the
+#                   ruamel config validation and the fastapi probe work.
+if [ -x "$HERMES_LIB/venv/bin/python" ]; then
+  PY="$HERMES_LIB/venv/bin/python"
+else
+  PY="$(ls -d "$HERMES_HOME"/tools/python-*/bin/python3 2>/dev/null | sort -V | tail -1 || true)"
+  [ -n "$PY" ] || PY="$(command -v python3)"
+  for _uvdir in "$HERMES_HOME"/cache/uv/archive-v0/*/; do
+    [ -d "$_uvdir" ] && PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$_uvdir"
+  done
+  export PYTHONPATH
+fi
 
 DO_DAEMON=1
 DO_RESTART=1
