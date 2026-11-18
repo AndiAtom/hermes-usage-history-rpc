@@ -1,15 +1,14 @@
 # hermes-usage-history-rpc
 
 > [!IMPORTANT]
-> **Upcoming: this repo will be merged into
+> **This repo has been merged into
 > [`hermes-token-stats`](https://github.com/AndiAtom/hermes-token-stats)
-> and archived.** All development, releases and install paths move there
-> (backend code lands as `backend/`). Versions unify to a single `v1.0.0`
-> (the client `v5.x` and this repo's `v0.x` lines both end there). This
-> repo stays readable as-is, and existing installs keep working via
-> `install.sh` re-runs — follow
-> [`hermes-token-stats`](https://github.com/AndiAtom/hermes-token-stats)
-> for the migration notes when v1.0.0 ships.
+> and is now archived.** All development, releases and install paths have
+> moved there (this backend lives on as `backend/`). Versions unified to
+> a single `v1.0.0` (the client `v5.x` and this repo's `v0.x` lines both
+> ended there). This repo remains readable for reference; existing
+> installs keep working — future install commands point at the monorepo:
+> `curl -fsSL https://raw.githubusercontent.com/AndiAtom/hermes-token-stats/main/backend/install.sh | bash -s -- --yes`
 
 Server-side usage analytics for [Hermes Agent](https://github.com/NousResearch/hermes-agent):
 a known-ledger daemon + plugin backend serving **monotonic**
